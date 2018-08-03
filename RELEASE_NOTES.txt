@@ -1,0 +1,369 @@
+RELEASE NOTES FOR HICUP V0.6.1 (10 May 2018)
+----------------------------------------------
+
+HiCUP v0.6.1 is a minor update incorporating the changes described below:
+
+-Bowtie2 may now align reads using more than one thread
+(while preserving the input/output read order), thereby reducing 
+processing times.  The number of threads allocated to Bowtie2 will be 
+the number of threads specified by the user divided by the number of 
+files processed. 
+
+-Fixed bug causing HiCUP Mapper to try to read beyond the end of a mapped 
+reads SAM file, consequently causing the script to crash.
+
+
+RELEASE NOTES FOR HICUP V0.6.0 (23 April 2018)
+----------------------------------------------
+
+HiCUP v0.6.0 is a major update incorporating the changes described below:
+
+-Parameters adjusted for HiCUP mapper in determining what constitutes a
+multi-mapping read, when using Bowtie2 as the aligner. 
+
+
+RELEASE NOTES FOR HICUP V0.5.10 (26 October 2017)
+-------------------------------------------------
+
+HiCUP v0.5.10 is a minor update incorporating the changes described below:
+
+-Fixed bug causing hicup_mapper to not pair a small proportion of valid 
+reads.
+
+
+RELEASE NOTES FOR HICUP V0.5.9 (15 September 2016)
+--------------------------------------------------
+
+HiCUP v0.5.9 is a minor update incorporating the changes described below:
+
+-Modified HiCUP Deduplicator so it may process genomes comprising
+hundreds of chromosomes (e.g. genome assemblies)
+
+-Added script Misc/get_captured_reads for identifying on/off target
+di-tags in capture Hi-C datasets
+
+-Fixed bug when running hicup_truncater independently, causing the script 
+to interpret NoFill:0 in the config file as effectively NoFill:1
+
+
+RELEASE NOTES FOR HICUP V0.5.8 (19 October 2015)
+------------------------------------------------
+
+HiCUP v0.5.8 is a minor update incorporating the changes described below:
+
+- Fixed bug preventing an odd number of files being specified when using
+a configuration file with hicup_digester, hicup_filter or 
+hicup_deduplicator.
+
+
+RELEASE NOTES FOR HICUP V0.5.7 (18 June 2015)
+---------------------------------------------
+
+HiCUP v0.5.7 is a minor update incorporating the changes described below:
+
+- Fixed bug preventing whole pipeline running to completion if --outdir
+is set to a folder other than the current working directory.
+
+
+RELEASE NOTES FOR HICUP V0.5.6 (09 June 2015)
+---------------------------------------------
+
+HiCUP v0.5.6 is a minor update incorporating the changes described below:
+
+- Fixed bug preventing, when multiple samples are processed, the 
+generation of HTML summary reports and the text file auditing the 
+progress of read pairs through the entire pipeline.
+
+
+RELEASE NOTES FOR HICUP V0.5.5 (20 May 2015)
+--------------------------------------------
+
+HiCUP v0.5.5 is a minor update incorporating the changes described below:
+
+- HiCUP produces a text file auditing the progress of read pairs through 
+the entire pipeline for all samples processed.
+
+- Added the 'Conversion' folder, containing scripts for converting HiCUP 
+BAM/SAM output into formats compatible with GOTHiC, Homer, Hicpipe and 
+Fit-Hi-C.
+
+Fixed bug preventing users specifying two --re1 restriction enzymes 
+(i.e. the enzymes that create the Hi-C ligation junctions).
+
+
+RELEASE NOTES FOR HICUP V0.5.4 (01 April 2015)
+----------------------------------------------
+HiCUP v0.5.4 is a minor update incorporating the changes described below:
+
+- HiCUP Digester checks the first line of each input file begins with a 
+valid FASTA header.
+
+- Fixed bug causing HiCUP to ignore choice of aligner.
+
+- HiCUP output compatible with SamTools release (v1.2), which is more 
+strict with regard to the PG headers in a BAM/SAM file.
+
+- Fixed bug causing files to be compressed if zip:0 selected in a 
+configuration file.
+
+- Fixed bug causing --re2 option sequence (i.e. not --re1 sequence) to 
+be used to truncate reads prior to mapping.
+
+- Should one or more sample contain no valid di-tags the pipeline would 
+produce no HTML summary files, even for samples containing valid di-tags. 
+This no longer happens, instead the script displays a warning message 
+reporting samples not progressing through the pipeline and produces 
+HTML for samples containing valid di-tags.
+
+- Improved documentation by creating Markdown files.  These were added to 
+the 'Documentation' folder.  The HiCUP Manual and QuickStart 
+PDF files were deleted.
+
+
+RELEASE NOTES FOR HICUP V0.5.3 (31 December 2014)
+-------------------------------------------------
+HiCUP v0.5.3 is a minor update incorporating the changes described below:
+
+- HiCUP attempts to intelligently name files as the pipeline proceeds.
+Please Note: To avoid passing HiCUP input files with identical names 
+prior to the filename extension.  For example, the files 'sample.fa' and 
+'sample.fastq' would produce files with identical names as the pipeline 
+progresses.  This problem could be overcome by renaming one the files to 
+'sample2.fa'.   To minimise inconvenience, HiCUP will immediately 
+produce a warning message and not run if the input filenames are too 
+similar.
+
+
+RELEASE NOTES FOR HICUP V0.5.2 (22 November 2014)
+-------------------------------------------------
+HiCUP v0.5.2 is a minor update incorporating the changes described below:
+
+- When running the whole pipeline, a folder may be specified to which all 
+intermediate files are written. These files are deleted after the 
+hicup_deduplicator script has terminated.
+
+- FASTQ format now specified differently, valid options are:
+Sanger, Solexa_Illumina_1.0, Illumina_1.3 or Illumina_1.5
+
+- All configuration files kept in the 'config_files' folder.
+
+- hicup_digester may be passed lowercase characters denoting the 
+restriction enzyme recognition site.
+
+- Pipeline no longer terminates if SAM Tools in not installed.
+
+
+RELEASE NOTES FOR HICUP V0.5.1 (02 November 2014)
+-------------------------------------------------
+HiCUP v0.5.1 is a minor update incorporating the changes described below:
+
+- hicup_deduplicator now accepts --threads as an argument.
+
+
+RELEASE NOTES FOR HICUP V0.5.0 (01 October 2014)
+-------------------------------------------------
+HiCUP v0.5.0 is a major update incorporating the changes described below:
+
+- HiCUP compatible with Bowtie2.
+
+- To reduce mis-mapping, HiCUP no longer uses --strata as a parameter 
+when aligning with Bowtie.
+
+- Perl module GD::Graph is no longer a dependency since the pipeline now 
+uses R to generate figures.
+
+- The scripts ‘hicup’, ‘hicup_trunacter’ and ‘hicup_mapper’ all require 
+file pairs as input. Such pairs should now be placed on adjacent lines 
+in their respective configuration files. (Previous versions of HiCUP 
+required paired files to be placed on the same line, separated using 
+the pipe (‘|’) character. HiCUP still accepts filename pairs in this 
+deprecated format.)
+
+- Command line arguments can be used in conjunction with a configuration 
+file. Parameters set using the command line will override those set 
+using a configuration file.
+
+- Fixed bug causing HiCUP only being able to process files in the 
+current working directory.
+
+
+RELEASE NOTES FOR HICUP V0.4.2 (27 November 2013)
+-------------------------------------------------
+HiCUP v0.4.2 is a minor update incorporating the changes described below:
+
+- Pipeline produces di-tag length (prior to filtering) distribution 
+plots in the HTML document and as a separate GD::Graph line plot.
+
+- Pipeline produces an HTML report when following the double-digest 
+protocol.
+
+- HTML file reports percentage unique di-tags following de-duplication.
+
+- HiCUP version number and pipeline parameters are printed in the 
+headers of the SAM/BAM files.
+
+- User can specify hi-c ligation sequences directly via hicup.conf
+
+- Fixed bug causing HTML reports not to be written if a single sample 
+did not pass completely through the pipeline.
+
+- Fixed bug preventing 'longest:' or 'shortest:' config option being 
+left blank in hicup.conf
+
+
+RELEASE NOTES FOR HICUP V0.4.1 (23 September 2013)
+--------------------------------------------------
+HiCUP v0.4.1 is a minor update incorporating the changes described below:
+
+- Fixed bug causing results from different datasets to become mixed in
+the HTML report.
+
+- Improved HTML report layout.
+
+
+RELEASE NOTES FOR HICUP V0.4.0 (10 September 2013)
+--------------------------------------------------
+HiCUP v0.4.0 is a major update incorporating the changes described below:
+
+- A di-tag is defined by each of its constituent reads and each read is 
+now defined by 1) the position in the reference genome to which the first 
+base of the sequence read (putative sonication cut site) map; and 2) the 
+orientation of the sequence read with respect to the reference genome. 
+The read end position is no longer considered.
+
+- Fixed bug in hicup_deduplicator preventing it identifying all 
+duplicates if the sequencing run was performed with a different number 
+of cycles. 
+
+- Added --nofill option to hicup_truncater (and consequently hicup) 
+allowing users to specify that a fill-in of sticky ends was not 
+performed. 
+
+- Made slight adjustment to hicup_truncator to prevent division by zero 
+errors when working out the %truncation rate.
+
+- hicup_truncater now truncates upstream of the restriction enzyme 
+recognition site, not at the restriction enzyme cut site.
+
+- hicup_mapper now reports the number of reads that were too short to 
+be sent to Bowtie. The mapping efficiency will refer to: 
+(100 * unique alignments) / 
+(reads too short to send to Bowtie + reads sent to Bowtie).
+
+- hicup_filter now discriminates between same-fragment dangling ends 
+and same-fragment internal. 
+
+- HiCUP master script edited so the file processes all the reads in a 
+file to determine FASTQ quality scores.
+
+- Added a check in the pipeline to confirm the number of forward and 
+reverse reads are the same in the FASTQ file pairs (some users appear 
+to filter reads in some way prior passing to HiCUP).
+
+- Users can now specify an output directory to which output files are 
+written.
+
+- All summary files now display the same datestamp.
+
+- HiCUP sonication protocol now generates an HTML report summarising the 
+results of each file processed.
+
+
+RELEASE NOTES FOR HICUP V0.3.0 (02 November 2012)
+-------------------------------------------------
+HiCUP v0.3.0 is a major update incorporating the changes described below:
+
+- hicup_sorter removed from the pipeline. Users should now de-multiplex 
+samples using other software.
+
+- The pipeline determines automatically the FASTQ format (e.g. Sanger) 
+adopted if this was not specified by the user.  It may not always be 
+possible to determine this unambiguously and in such circumstances the 
+pipeline selects the most likely option.
+
+- The pipeline will try to determine the path to Bowtie if this is not 
+specified by the user. Also, fixed a bug in how HiCUP identifies the 
+location of SAMtools.
+
+- Improved how the pipeline checks Bowtie indices have been specified 
+correctly by the user.
+
+
+RELEASE NOTES FOR HICUP V0.2.2 (03 August 2012)
+-----------------------------------------------
+HiCUP v0.2.2 is a minor update adding the functionality described below:
+
+- The mapping process is now less memory intensive, with Bowtie 
+option --chunkmbs lowered from 1024 to 512. Also, reads shorter than
+20bps are no longer passed to Bowtie.
+
+- Fixed bug preventing HiCUP processing files in a separate folder from 
+the hicup.conf configuration file.
+
+- The hicup master script terminates immediately if another pipeline 
+script dies. 
+
+
+RELEASE NOTES FOR HICUP V0.2.1 (19 July 2012)
+---------------------------------------------
+HiCUP v0.2.1 is a minor update adding the functionality described below:
+
+- The hicup_filter script now calculates the number of di-tags whose
+alignment to the reference genome suggests they were created by a single 
+restriction fragment circularizing and ligating to itself, and then 
+following sonication forms a liner molecule containing the modified Hi-C 
+restriction site. These di-tags were previously classified as 
+'Same Fragment' di-tags, but this category now comprises all di-tags 
+in which both reads map to the same restriction fragment except those 
+classified as derived from circularized molecules.
+
+- The hicup_filter summary file now reports the number of di-tags 
+falling within each category, not the percentage summary. 
+
+
+RELEASE NOTES FOR HICUP V0.2.0 (26 June 2012)
+---------------------------------------------
+HiCUP v0.2.0 is a major update providing extra functionality in addition 
+to the removal of several bugs. The most significant changes are 
+described below:
+
+- Addition of a new script ('hicup_deduplicator') at the end of the 
+pipeline for removing duplicate di-tags (most probably PCR artefacts). 
+The script generates a text file summarising the results, along with a 
+pie chart (*.png format) of the cis/trans ratio of di-tags present in 
+the final dataset.
+
+- hicup_mapper and hicup_pairer combined into a single script called 
+'hicup_mapper'. In addition to reporting Bowtie mapping efficiencies, 
+the script also reports the percentage read pairs in which both 
+forward and reverse reads could be aligned to the reference genome.
+
+- hicup_filter, when processing Hi-C data generated using the Hi-C 
+sonication protocol, now rejects di-tags on the basis of size AFTER 
+all other filters have been passed.
+
+- hicup_filter produces a less verbose summary file and produces pie 
+charts of the results (*.png format).
+
+- hicup_filter modified so when following the sonication protocol it 
+identifies and rejects di-tags containing re-ligated fragments, not 
+simply those on adjacent fragments. It does this by checking that the 
+fragments are adjacent (as before) and in the same orientation - which 
+means the forward and reverse reads will be on opposite strands 
+(+ and -).
+
+- hicup_truncater now reports the average length of a truncated 
+sequence.
+
+- Fixed a bug causing hicup_digester to only process the last 
+chromosome in a file containing multiple chromosomes.
+
+
+RELEASE NOTES FOR HICUP V0.1.1
+------------------------------
+
+HiCUP v0.1.1 is an alpha release and as such is still a work in progress.
+
+Although the core functionality of the program should all now be 
+present, it is very much still a work in progress and you should bear 
+this mind when running the software.

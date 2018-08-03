@@ -1,0 +1,1200 @@
+#!/usr/bin/perl
+
+use strict;
+use warnings;
+use Getopt::Long;
+use File::Temp qw/ tempdir /;
+use File::Path qw(remove_tree);
+use File::Basename;
+use FindBin '$Bin';
+use lib $Bin;
+use hicup_module;
+use hicup_module qw(hashVal check_no_duplicate_filename checkAligner checkAlignerIndices
+  quality_checker fileNamer datestampGenerator determineAlignerFormat);
+
+use Data::Dumper;
+
+###################################################################################
+###################################################################################
+##This file is Copyright (C) 2018, Steven Wingett (steven.wingett@babraham.ac.uk)##
+##                                                                               ##
+##                                                                               ##
+##This file is part of HiCUP.                                                    ##
+##                                                                               ##
+##HiCUP is free software: you can redistribute it and/or modify                  ##
+##it under the terms of the GNU General Public License as published by           ##
+##the Free Software Foundation, either version 3 of the License, or              ##
+##(at your option) any later version.                                            ##
+##                                                                               ##
+##HiCUP is distributed in the hope that it will be useful,                       ##
+##but WITHOUT ANY WARRANTY; without even the implied warranty of                 ##
+##MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the                  ##
+##GNU General Public License for more details.                                   ##
+##                                                                               ##
+##You should have received a copy of the GNU General Public License              ##
+##along with HiCUP.  If not, see <http://www.gnu.org/licenses/>.                 ##
+###################################################################################
+###################################################################################
+
+##########################################################
+#Get user-supplied parameters
+#Option variables
+my %config = (
+    ambiguous => '',
+    config    => '',
+    datestamp => '',
+    example   => '',
+    help      => '',
+    keep      => '',
+    nofill    => '',
+    outdir    => '',
+    quiet     => '',
+    version   => '',
+    zip       => '',
+    bowtie    => '',
+    bowtie2   => '',
+    digest    => '',
+    format    => '',
+    index     => '',
+    longest   => '',
+    re1       => '',
+    shortest  => '',
+    temp      => '',
+    threads   => '',
+    filenames => '',
+    sequence  => '',
+    samtools  => '',
+    r         => '',
+    aligner   => ''    #Not-specified by user - name of aligner to use
+);
+
+my $config_result = GetOptions(    #Stores parameters
+    "ambiguous"  => \$config{ambiguous},
+    "config=s"   => \$config{config},      #Keep, despite being the default
+    "datestamp"  => \$config{datestamp},
+    "example"    => \$config{example},
+    "help"       => \$config{help},
+    "keep"       => \$config{keep},
+    "nofill"     => \$config{nofill},
+    "outdir=s"   => \$config{outdir},
+    "version"    => \$config{version},
+    "quiet"      => \$config{quiet},
+    "zip"        => \$config{zip},
+    "bowtie=s"   => \$config{bowtie},
+    "bowtie2=s"  => \$config{bowtie2},
+    "digest=s"   => \$config{digest},
+    "format=s"   => \$config{format},
+    "index=s"    => \$config{index},
+    "longest=s"  => \$config{longest},
+    "re1=s"      => \$config{re1},
+    "shortest=s" => \$config{shortest},
+    "temp=s"     => \$config{temp},
+    "threads=s"  => \$config{threads},
+    "filenames"  => \$config{filenames},
+    "r=s"        => \$config{r},
+    "sequence"   => \$config{sequence},
+    "samtools"   => \$config{samtools}     #Path to SAM Tools, not yet described in documentation
+);
+
+die "Command line options need to be in the correct format (hicup -help for more details).\n" unless ($config_result);
+
+$config{help} = 1 unless ( hashVal(%config) );    #Print help and exit if no command line parameters
+
+if ( $config{help} ) {
+    print while (<DATA>);
+    exit(0);
+}
+
+#Print version and exit
+if ( $config{version} ) {
+    print "HiCUP v$hicup_module::VERSION\n";
+    exit(0);
+}
+
+if ( $config{example} ) {
+    print_example_config_file('hicup_example.conf');
+    exit(0);
+}
+
+if( hasval($config{config}) ){
+	die "Configuration file '$config{config}' does not exist\n" unless(-e $config{config});
+}
+
+print "Starting HiCUP pipeline (v$hicup_module::VERSION)\n" unless $config{quiet};
+
+my @filenames;
+if( hasval($config{config}) ){
+    @filenames = process_config( $config{config}, \%config );    #Modifies %config and returns an array of the filenames
+    if ( scalar @filenames % 2 ) {
+        die "There needs to be an even number of files in the configuration file, see hicup --help for more details.\n";
+    }
+}
+
+if (@ARGV) {
+    if ( scalar @ARGV % 2 ) {
+        die "There needs to be an even number of files specified in the command line, see hicup --help for more details.\n";
+    }
+    push( @filenames, @ARGV );                                                               #Add filenames specified in the command line to those in the configuration file
+}
+
+
+#Check files specified and exist
+if(@filenames){
+	unless ( check_files_exist( \@filenames, 'EXISTS' ) ) {
+    	die "Please adjust configuration.\n";
+	}
+}else{
+	die "Please specify files to process.\n";
+}
+
+
+my %files = @filenames;                                                                      #%files : hash of paired forward and reverse files
+die "Only unique filenames are allowed (irrespective of the path to the file).\n" unless check_no_duplicate_filename(%files);    #Check hash contains no duplicate filenames (irrespective of location)
+
+##########################################################
+#Check user-supplied parameters are ok
+unless ( check_parameters() ) {
+    die "Please change configuration file and/or command-line parameters and/or installation accordingly\n";
+}
+
+
+##########################################################
+#Set datestamp
+$config{datestamp} = datestampGenerator();   
+if( hasval ($config{outdir}) ){
+    $config{datestamp} = versioner( $config{datestamp}, $config{outdir}, $config{temp} );
+}else{
+    $config{datestamp} = versioner( $config{datestamp}, './', $config{temp} );    #Search cwd
+}
+
+
+#########################################################
+#Check input files exist and outputfiles do not
+my @hicup_final_outfiles = fileNamer( \@filenames, \%config, 'all', 1, 1, 1, 1, 1 );
+foreach my $file (@hicup_final_outfiles) {
+    $file = $config{outdir} . $file;
+}
+
+unless ( check_files_exist( \@hicup_final_outfiles, 'NOT_EXISTS' ) ) {
+    die "HiCUP will not run until these files have been removed.\n";
+}
+
+#########################################################################
+#Check files exist
+#Check the input files exist
+#Sequences, genome, digest
+my $files_exist = 1;
+unless ( -e $config{digest} ) {
+    warn "File '$config{digest}' does not exist\n";
+    $files_exist = 0;
+}
+
+foreach my $filenameF ( keys %files ) {
+    my $filenameR = $files{$filenameF};
+    unless ( -e $filenameF ) {
+        warn "Sequence file '$filenameF' does not exist\n";
+        $files_exist = 0;
+    }
+    unless ( -e $filenameR ) {
+        warn "Sequence file '$filenameR' does not exist\n";
+        $files_exist = 0;
+    }
+}
+
+unless ($files_exist) {
+    die "Please adjust the configuration file or add specified files.\n";
+}
+
+#Modify the outdir/temp directory setting as required
+if ( hasval( $config{temp} ) ) {
+    if ( hasval( $config{outdir} ) ) {
+        $config{originalOutdir} = $config{outdir};
+    } else {
+        $config{originalOutdir} = './';
+    }
+
+    ( $config{temp} ) = tempdir( 'HiCUP_temp_directory_XXXXXX', DIR => $config{temp} );
+    $config{temp}   = $config{temp} . '/';
+    $config{outdir} = $config{temp};         #Write future output to the temp directory
+}
+
+########################################################################
+#Start the pipeline
+my $sonication_protocol = 0;                 #Is this a sonication or a double-digest protocol
+
+if ( $config{digest} =~ /\.gz$/ ) {
+    open( DIGEST, "zcat $config{digest} |" ) or die "Couldn't read file '$config{digest}' : $!";
+} else {
+    open( DIGEST, $config{digest} ) or die "Cannot read file read file '$config{digest}' : $!";
+}
+
+my $header_line = scalar <DIGEST>;
+unless ( $header_line =~ /^.+\t.+\t(.+)\t.+$/ ) {
+    die "Genome digest file header is not in the correct format\n";
+}
+
+#Obtain the restriction enzyme 1 sequence from the digest file
+if ( $1 eq "Restriction_Enzyme2:None" ) {    #Sonication protocol
+    $sonication_protocol = 1;
+}
+
+if ( $config{sequence} ne '' ) {
+    $config{re1} = '';
+} else {
+    print "Reading genome digest file '$config{digest}' to determine Hi-C restriction enzyme\n" unless $config{quiet};
+
+    unless ( $header_line =~ /^.+\tRestriction_Enzyme1:\S+\s\[(.+?)\]\t.+/ ) {
+        die "Genome digest file $config{digest} is not in the correct format.\n";
+    }
+
+    $config{re1} = $1;
+
+    unless ( $config{re1} =~ /^[ATCG\^]+$/ ) {
+        die "The restriction site (re1) needs to be a valid DNA sequence\n";
+    }
+    unless ( ( $config{re1} =~ tr/\^// ) == 1 ) {
+        die "The restriction site (re1) should contain one cut position, denoted by '^'.\n";
+    }
+}
+close DIGEST;
+
+#Add command line flags to relevant arguments
+$config{ambiguous} = "--ambiguous"                if ( $config{ambiguous} ne '' );
+$config{bowtie}    = "--bowtie $config{bowtie}"   if ( $config{bowtie} ne '' );
+$config{bowtie2}   = "--bowtie2 $config{bowtie2}" if ( $config{bowtie2} ne '' );
+my $datestamp_flag = "--datestamp $config{datestamp}";    #Enables all summary files to have same datestamp
+$config{digest} = "--digest $config{digest}" if ( $config{digest} ne '' );
+$config{format} = "--format $config{format}" if ( $config{format} ne '' );
+if ( $config{longest} ne '' ) {
+    $config{longest} = "--longest $config{longest}";
+}
+my $outdir_flag = '';
+$outdir_flag       = "--outdir $config{outdir}"     if ( $config{outdir} );           #This is the flag, not outdir
+$config{nofill}    = "--nofill"                     if ( $config{nofill} ne '' );
+$config{re1}       = "--re1 $config{re1}"           if ( $config{re1} ne '' );
+$config{seq_trunc} = "--sequence $config{sequence}" if ( $config{sequence} ne '' );
+if ( $config{shortest} ne '' ) {
+    $config{shortest} = "--shortest $config{shortest}";
+}
+
+$config{quiet} = "--quiet" if ( $config{quiet} ne '' );
+$config{zip}   = "--zip"   if ( $config{zip} );
+$config{index} = "--index $config{index}";
+$config{r}     = "-r $config{r}";
+
+#Run each hicup script in turn
+#Pipeline will delete intermediate files, unless specified otherwise i.e. flag 'keep:'
+#Pipeline will keep all summary files
+#Pipeline will zip final and intermediate data output files if 'zip:' selected
+#All files will be kept in current folder, but a new folder shall be created for hicup_filter reject sequences
+
+#Truncate sequences
+my $filenames_string = filename_string_generator(%files);
+
+#$config{outdir} = $outdir_temp;
+my $truncater_version;    #Stores the truncater version number
+
+$truncater_version = `$Bin/hicup_truncater -v` or die "Can't run hicup_truncater to determine version number\n.";
+
+if ( $config{zip} ) {
+    !system("$Bin/hicup_truncater $config{r} $datestamp_flag $config{nofill} $outdir_flag $config{quiet} $config{re1} $config{sequence} $config{threads} $config{zip} $filenames_string")
+      or die "Can't run hicup_truncater\n.";
+} else {
+    !system("$Bin/hicup_truncater $config{r} $datestamp_flag $config{nofill} $outdir_flag $config{quiet} $config{re1} $config{sequence} $config{threads} $filenames_string")
+      or die "Can't run hicup_truncater\n.";
+}
+
+#Map and pair sequences
+my $ligation = "\@PG\tID:HiCUP Truncater\tVN:" . $hicup_module::VERSION;       #Create the hidden ligation flag to send to HiCUP mapper to print the hicup_truncation settings to the output file
+if ( $config{re1} ) {
+    $ligation = $ligation . "\tDS:\"" . "Restriction enzyme $config{re1}\"";
+} else {
+    $ligation = $ligation . "\tDS\"" . "Ligation junction sequences $config{sequence}\"";
+}
+$ligation = "--ligation \'$ligation\'";
+
+my @truncater_outputfiles = fileNamer( \@filenames, \%config, 'truncater' );
+@truncater_outputfiles = arrayAppend( \@truncater_outputfiles, $config{outdir} );
+my %truncater_outputfiles_paired = @truncater_outputfiles;
+$filenames_string = filename_string_generator(%truncater_outputfiles_paired);
+
+if ( $config{zip} ) {
+    !system(
+"$Bin/hicup_mapper $config{r} $config{bowtie} $config{bowtie2} $config{ambiguous} $datestamp_flag $config{format} $outdir_flag $config{index} $ligation $config{quiet} $config{threads} $config{zip} $filenames_string"
+    ) or die "Can't run hicup_mapper\n.";
+} else {
+    !system(
+"$Bin/hicup_mapper $config{r} $config{bowtie} $config{bowtie2} $config{ambiguous} $datestamp_flag $config{format} $outdir_flag $config{index} $ligation $config{quiet} $config{threads} $filenames_string"
+    ) or die "Can't run hicup_mapper\n.";
+}
+
+#Delete truncated intermediates
+unless ( $config{keep} ) {
+    foreach my $key ( keys %truncater_outputfiles_paired ) {
+        unlink $key or warn "Cannot delete '$key'.\n";                                                                  #First in the pair
+        unlink $truncater_outputfiles_paired{$key} or warn "Cannot delete '$truncater_outputfiles_paired{$key}'.\n";    #Second in the pair
+    }
+}
+
+#Filter files
+my @mapper_outputfiles = fileNamer( \@truncater_outputfiles, \%config, 'mapper' );
+@mapper_outputfiles = arrayAppend( \@mapper_outputfiles, $config{outdir} );
+
+$filenames_string = filename_string_generator_unpaired(@mapper_outputfiles);                                            #Use this subroutine for unpaired filenames
+
+if ( $config{zip} ) {
+    !system("$Bin/hicup_filter $config{r} $datestamp_flag $config{digest} $config{longest} $outdir_flag $config{quiet} $config{shortest} $config{threads} $config{zip} $filenames_string")
+      or die "Can't run hicup_filter.\n";
+} else {
+    !system("$Bin/hicup_filter $config{r} $datestamp_flag $config{digest} $config{longest} $outdir_flag $config{quiet} $config{shortest} $config{threads} $filenames_string")
+      or die "Can't run hicup_filter.\n";
+}
+
+#Delete paired intermediates
+unless ( $config{keep} ) {
+    foreach (@mapper_outputfiles) {
+        my $file_to_delete = $_;
+        if(-e $file_to_delete){   #May not be present if no reads mapped
+            unlink $file_to_delete or warn "Cannot delete '$file_to_delete" . "$_'.\n";
+        } 
+    }
+}
+
+#De-duplicate files
+my @filter_outputfiles = fileNamer( \@mapper_outputfiles, \%config, 'filter' );    #Subroutine processing hash as an array
+@filter_outputfiles = arrayAppend( \@filter_outputfiles, $config{outdir} );   #Do this here as outdir may change below if temp directory specified
+if ( hasval( $config{temp} ) ) {    #Use send to outdir, if temp folder specified
+    $config{outdir} = $config{originalOutdir};
+    if ( hasval( $config{outdir} ) ) {
+        $outdir_flag = "--outdir $config{outdir}";
+    } else {
+        $outdir_flag = '';
+    }
+}
+$filenames_string   = filename_string_generator_unpaired(@filter_outputfiles);     #Use this subroutine for unpaired filenames
+
+if ( $config{zip} ) {                                                              #$keep not significant since this is the last step in the pipeline
+    !system("$Bin/hicup_deduplicator $config{r} $datestamp_flag $outdir_flag $config{quiet} $config{threads} $config{zip} $filenames_string") or die "Can't run hicup_deduplicator.\n";
+} else {
+    !system("$Bin/hicup_deduplicator $config{r} $datestamp_flag $outdir_flag $config{quiet} $config{threads} $filenames_string") or die "Can't run hicup_deduplicator.\n";
+}
+
+#Delete filtered files
+unless ( $config{keep} ) {
+    foreach (@filter_outputfiles) {
+        my $file_to_delete = $_;
+        if(-e $file_to_delete){    #Sample may contain no valid reads pairs
+            unlink $file_to_delete or warn "Cannot delete '$file_to_delete'.\n";
+        }
+    }
+}
+
+#Change deduplication filenames to final hicup output filenames
+my @deduplicator_outfiles = fileNamer( \@filter_outputfiles, \%config, 'deduplicator' );
+foreach my $dedup_file (@deduplicator_outfiles) {
+    if(-e $config{outdir}.$dedup_file){    #File may not be present because no valid di-tags were identified
+        my $hicup_final_file = fileNamer( $dedup_file, \%config, 'hicup' );
+        my $command = "mv $config{outdir}" . "$dedup_file $config{outdir}" . "$hicup_final_file";
+        !system($command) or die "Could not rename file '$command' : $!";
+    }
+}
+
+###############################################################################################
+#Create the HTML summary output file and combined summary text file
+#Open each summary document in turn and write data into a hash of arrays %{filename} = $data
+print "Creating HTML and text file HiCUP summary reports\n" unless $config{quiet};
+
+#Reset the outdir/temp directory setting as required
+if ( hasval( $config{temp} ) ) {
+    $config{outdir} = $config{temp};            #Look in temp directory
+    $outdir_flag = "-outdir $config{outdir}";
+}
+
+my %truncater_summary;
+my ($truncater_summary_filename) = fileNamer( '', \%config, 'truncater', 0, 1, 0, 0, 0 );    #Array returned
+$truncater_summary_filename = $config{outdir} . $truncater_summary_filename;
+open( TRUNCATER_SUMMARY, '<', $truncater_summary_filename ) or die "Could not open '$truncater_summary_filename' : $!";
+scalar <TRUNCATER_SUMMARY>;                                                                  #Ignore header
+while (<TRUNCATER_SUMMARY>) {
+    my $line = $_;
+    chomp $line;
+    my @array = split( /\t/, $line );
+    my $filename = shift @array;
+    $filename = ( split( /\//, $filename ) )[-1];                                            #Filename only
+    $truncater_summary{$filename} = [@array];
+}
+close TRUNCATER_SUMMARY or die "Could not close filehandle on '$truncater_summary_filename' : $!";
+
+my %mapper_summary;
+my ($mapper_summary_filename) = fileNamer( '', \%config, 'mapper', 0, 1, 0, 0, 0 );          #Array returned
+$mapper_summary_filename = $config{outdir} . $mapper_summary_filename;
+open( MAPPER_SUMMARY, '<', $mapper_summary_filename ) or die "Could not open '$mapper_summary_filename' : $!";
+scalar <MAPPER_SUMMARY>;                                                                     #Ignore header
+while (<MAPPER_SUMMARY>) {
+    my $line = $_;
+    chomp $line;
+    my @array = split( /\t/, $line );
+    my $filename = shift @array;
+    $mapper_summary{$filename} = [@array];
+}
+close MAPPER_SUMMARY or die "Could not close filehandle on '$mapper_summary_filename' : $!";
+
+my %filter_summary;
+my ($filter_summary_filename) = fileNamer( '', \%config, 'filter', 0, 1, 0, 0, 0 );          #Array returned
+$filter_summary_filename = $config{outdir} . $filter_summary_filename;
+open( FILTER_SUMMARY, '<', $filter_summary_filename ) or die "Could not open '$filter_summary_filename' : $!";
+scalar <FILTER_SUMMARY>;                                                                     #Ignore header
+while (<FILTER_SUMMARY>) {
+    my $line = $_;
+    chomp $line;
+    my @array = split( /\t/, $line );
+    my $filename = shift @array;
+    $filter_summary{$filename} = [@array];
+}
+close FILTER_SUMMARY or die "Could not close filehandle on '$filter_summary_filename' : $!";
+
+#Reset the outdir/temp directory setting as required
+if ( hasval( $config{temp} ) ) {
+    $config{outdir} = $config{originalOutdir};                                               #Use original output directory
+    if ( hasval( $config{outdir} ) ) {
+        $outdir_flag = "--outdir $config{outdir}";
+    } else {
+        $outdir_flag = '';
+    }
+}
+
+my %deduplicator_summary;
+my ($deduplicator_summary_filename) = fileNamer( '', \%config, 'deduplicator', 0, 1, 0, 0, 0 );    #Array returned
+$deduplicator_summary_filename = $config{outdir} . $deduplicator_summary_filename;
+open( DEDUPLICATOR_SUMMARY, '<', $deduplicator_summary_filename ) or die "Could not open '$deduplicator_summary_filename' : $!";
+scalar <DEDUPLICATOR_SUMMARY>;    #Ignore header                                                                    #Ignore header
+while (<DEDUPLICATOR_SUMMARY>) {
+    my $line = $_;
+    chomp $line;
+    my @array = split( /\t/, $line );
+    my $filename = shift @array;
+    $deduplicator_summary{$filename} = [@array];
+}
+close DEDUPLICATOR_SUMMARY or die "Could not close filehandle on '$deduplicator_summary_filename' : $!";
+
+my @grouped_files;                                                                                 #Array of arrays storing names of file_forward, file_reverse, file_combined for all the HiCUP steps
+
+@mapper_outputfiles = sort @mapper_outputfiles;                                                    #Ensure the file order is the same as for the sorted hashes
+@filter_outputfiles = sort @filter_outputfiles;
+
+my $i = 0;
+foreach my $key ( sort keys %files ) {
+    my $fileF = ( split( /\//, $key ) )[-1];                                                       #Filename only
+    my $fileR = $files{$key};
+    $fileR = ( split( /\//, $fileR ) )[-1];                                                        #Filename only
+
+    push @{ $grouped_files[$i] }, $fileF;
+    push @{ $grouped_files[$i] }, $fileR;
+    $i++;
+}
+
+$i = 0;
+foreach my $key ( sort keys %truncater_outputfiles_paired ) {
+    my $fileF = ( split( /\//, $key ) )[-1];                                                       #Filename only
+    my $fileR = $truncater_outputfiles_paired{$key};
+    $fileR = ( split( /\//, $fileR ) )[-1];                                                        #Filename only
+
+    push @{ $grouped_files[$i] }, $fileF;
+    push @{ $grouped_files[$i] }, $fileR;
+    $i++;
+}
+
+$i = 0;
+foreach (@mapper_outputfiles) {
+    my $file = ( split( /\//, $_ ) )[-1];                                                          #Filename only
+    push @{ $grouped_files[$i] }, $file;
+    $i++;
+}
+
+$i = 0;
+foreach (@filter_outputfiles) {
+    my $file = ( split( /\//, $_ ) )[-1];                                                          #Filename only
+    push @{ $grouped_files[$i] }, $file;
+    $i++;
+}
+
+
+
+ #Create the HTML and text summary reports for the entire pipeline
+ my (undef, $textFilename) = fileNamer( '', \%config, 'hicup', 0, 1, 0, 0, 0 );      #The HiCUP summary text filename (returned as an array)
+ $textFilename = $config{outdir} . $textFilename;
+ open( TEXT_REPORT, '>', $textFilename ) or die "Could not write to HiCUP summary text report '$textFilename' : $!";
+
+if($sonication_protocol){
+	print TEXT_REPORT (join("\t", qw(File Total_Reads_1 Total_Reads_2 Not_Truncated_Reads_1 Not_Truncated_Reads_2 Truncated_Read_1 Truncated_Read_2 Average_Length_Truncated_1 Average_Length_Truncated_2 Too_Short_To_Map_Read_1 Too_Short_To_Map_Read_2 Unique_Alignments_Read_1 Unique_Alignments_Read_2 Multiple_Alignments_Read_1 Multiple_Alignments_Read_2 Failed_To_Align_Read_1 Failed_To_Align_Read_2 Paired_Read_1 Paired_Read_2 Valid_Pairs Invalid_Pairs Same_Circularised Same_Dangling_Ends Same_Fragment_Internal Re_Ligation Contiguous_Sequence Wrong_Size Deduplication_Read_Pairs_Uniques Deduplication_Cis_Close_Uniques Deduplication_Cis_Far_Uniques Deduplication_Trans_Uniques Percentage_Mapped Percentage_Valid Percentage_Uniques Percentage_Unique_Trans Percentage_Ditags_Passed_Through_HiCUP)));
+	print TEXT_REPORT "\n";
+}else{
+	print TEXT_REPORT (join("\t", qw(File Total_Reads_1 Total_Reads_2 Not_Truncated_Reads_1 Not_Truncated_Reads_2 Truncated_Read_1 Truncated_Read_2 Average_Length_Truncated_1 Average_Length_Truncated_2 Too_Short_To_Map_Read_1 Too_Short_To_Map_Read_2 Unique_Alignments_Read_1 Unique_Alignments_Read_2 Multiple_Alignments_Read_1 Multiple_Alignments_Read_2 Failed_To_Align_Read_1 Failed_To_Align_Read_2 
+        Paired_Read_1 Paired_Read_2 Valid_Pairs Invalid_Pairs Wrong_Size No_Ligation No_Ligation_Internal_Re2 Unclassified Unmapped Self_Ligation Deduplication_Read_Pairs_Uniques Deduplication_Cis_Close_Uniques Deduplication_Cis_Far_Uniques Deduplication_Trans_Uniques Percentage_Mapped Percentage_Valid Percentage_Uniques Percentage_Unique_Trans Percentage_Ditags_Passed_Through_HiCUP)));
+	print TEXT_REPORT "\n";
+}
+
+if ( -e "$Bin/hicup_report.html" ) {    #Open the template report
+    open( TEMPLATE, '<', "$Bin/hicup_report.html" ) or die "Could not open '$Bin/hicup_report.html' : $!";
+    my $template;
+
+    while (<TEMPLATE>) {
+        $template .= $_;
+    }
+
+    close TEMPLATE or die "Could not close filehandle on '$Bin/hicup_report.html' : $!";
+
+    for my $i ( 0 .. $#grouped_files ) {
+
+        my @data;
+        my $input_total_reads_1;
+        my $input_total_reads_2;
+        my $input_not_truncated_reads_1;
+        my $input_not_truncated_reads_2;
+        my $input_truncated_read_1;
+        my $input_truncated_read_2;
+        my $input_average_length_truncated_1;
+        my $input_average_length_truncated_2;
+        my $input_too_short_to_map_read_1;
+        my $input_too_short_to_map_read_2;
+        my $input_unique_alignments_read_1;
+        my $input_unique_alignments_read_2;
+        my $input_multiple_alignments_read_1;
+        my $input_multiple_alignments_read_2;
+        my $input_failed_to_align_read_1;
+        my $input_failed_to_align_read_2;
+        my $input_unpaired_read_1;
+        my $input_unpaired_read_2;
+        my $input_paired_read_1;
+        my $input_paired_read_2;
+
+        #Check whether a final HiCUP output file was produced
+        my $final_file = fileNamer( $grouped_files[$i][-1], \%config, 'deduplicator' );
+        $final_file = fileNamer( $final_file, \%config, 'hicup' );
+        $final_file = $config{outdir} . $final_file;
+        unless(-e $final_file){    #Final file not found
+            $final_file = basename($final_file);
+            my $inputfile1 = basename( $grouped_files[$i][0] );
+            my $inputfile2 = basename( $grouped_files[$i][1] );   
+            warn "No final output file ('$final_file') was created for '$inputfile1' / '$inputfile2'\n";
+            warn "This is most likely a result of no valid di-tags being detected by HiCUP\n";
+            warn "Check intermediate summary files for more details\n";
+            next;
+        }
+
+        #Create summary report
+        my $htmlFilename = fileNamer( $grouped_files[$i][-1], \%config, 'deduplicator' );    #Determine the de-duplicator outputfile first
+        ($htmlFilename) = fileNamer( $htmlFilename, \%config, 'hicup', 0, 1, 0, 0, 0 );      #The HiCUP summary HTML (returned as an array)
+        $htmlFilename = $config{outdir} . $htmlFilename;
+
+        open( HTML_REPORT, '>', $htmlFilename ) or die "Could not write to HiCUP summary HTML report '$htmlFilename' : $!";
+
+        my $new_report = $template;
+
+        my $name_for_file = $htmlFilename;
+        $name_for_file =~ s/\.HiCUP_summary_report\.html$//;
+
+        $new_report =~ s/INPUT_FILENAME/$name_for_file/g;
+        $new_report =~ s/DATESTAMP/$config{datestamp}/g;
+
+        unless ( exists $truncater_summary{ $grouped_files[$i][0] } ) {                      #Some samples may not pass completely through the pipeline, so go to next loop if file does not exist
+            next;
+        }
+
+        @data = @{ $truncater_summary{ $grouped_files[$i][0] } };
+
+        $input_total_reads_1              = $data[0];
+        $input_truncated_read_1           = $data[1];
+        $input_not_truncated_reads_1      = $data[3];
+        $input_average_length_truncated_1 = $data[5];
+
+        $new_report =~ s/INPUT_TOTAL_READS_1/$input_total_reads_1/g;
+        $new_report =~ s/INPUT_TRUNCATED_READ1/$input_truncated_read_1/g;
+        $new_report =~ s/INPUT_NOT_TRUNCATED_READ1/$input_not_truncated_reads_1/g;
+        $new_report =~ s/INPUT_AVERAGE_LENGTH_TRUNCATED_READ1/$input_average_length_truncated_1/g;
+
+        unless ( exists $truncater_summary{ $grouped_files[$i][1] } ) {    #Some samples may not pass completely through the pipeline, so go to next loop if file does not exist
+            next;
+        }
+
+        @data = @{ $truncater_summary{ $grouped_files[$i][1] } };
+
+        $input_total_reads_2              = $data[0];
+        $input_truncated_read_2           = $data[1];
+        $input_not_truncated_reads_2      = $data[3];
+        $input_average_length_truncated_2 = $data[5];
+
+        $new_report =~ s/INPUT_TOTAL_READS_2/$input_total_reads_2/g;
+        $new_report =~ s/INPUT_TRUNCATED_READ2/$input_truncated_read_2/g;
+        $new_report =~ s/INPUT_NOT_TRUNCATED_READ2/$input_not_truncated_reads_2/g;
+        $new_report =~ s/INPUT_AVERAGE_LENGTH_TRUNCATED_READ2/$input_average_length_truncated_2/g;
+
+        unless ( exists $mapper_summary{ $grouped_files[$i][2] } ) {    #Some samples may not pass completely through the pipeline, so go to next loop if file does not exist
+            next;
+        }
+
+        @data = @{ $mapper_summary{ $grouped_files[$i][2] } };
+
+        $input_too_short_to_map_read_1    = $data[1];
+        $input_unique_alignments_read_1   = $data[3];
+        $input_multiple_alignments_read_1 = $data[5];
+        $input_failed_to_align_read_1     = $data[7];
+        $input_paired_read_1              = $data[9];
+
+        $new_report =~ s/INPUT_TOO_SHORT_TO_MAP_READ_1/$input_too_short_to_map_read_1/g;
+        $new_report =~ s/INPUT_UNIQUE_ALIGNMENTS_READ1/$input_unique_alignments_read_1/g;
+        $new_report =~ s/INPUT_MULTIPLE_ALIGNMENTS_READ1/$input_multiple_alignments_read_1/g;
+        $new_report =~ s/INPUT_FAILED_TO_ALIGN_READ1/$input_failed_to_align_read_1/g;
+        $new_report =~ s/INPUT_PAIRED_READ1/$input_paired_read_1/g;
+
+        unless ( exists $mapper_summary{ $grouped_files[$i][3] } ) {    #Some samples may not pass completely through the pipeline, so go to next loop if file does not exist
+            next;
+        }
+
+        @data = @{ $mapper_summary{ $grouped_files[$i][3] } };
+
+        $input_too_short_to_map_read_2    = $data[1];
+        $input_unique_alignments_read_2   = $data[3];
+        $input_multiple_alignments_read_2 = $data[5];
+        $input_failed_to_align_read_2     = $data[7];
+        $input_paired_read_2              = $data[9];
+
+        $new_report =~ s/INPUT_TOO_SHORT_TO_MAP_READ_2/$input_too_short_to_map_read_2/g;
+        $new_report =~ s/INPUT_UNIQUE_ALIGNMENTS_READ2/$input_unique_alignments_read_2/g;
+        $new_report =~ s/INPUT_MULTIPLE_ALIGNMENTS_READ2/$input_multiple_alignments_read_2/g;
+        $new_report =~ s/INPUT_FAILED_TO_ALIGN_READ2/$input_failed_to_align_read_2/g;
+        $new_report =~ s/INPUT_PAIRED_READ2/$input_paired_read_2/g;
+
+        unless ( exists $filter_summary{ $grouped_files[$i][4] } ) {    #Some samples may not pass completely through the pipeline, so go to next loop if file does not exist
+            next;
+        }
+
+        @data = @{ $filter_summary{ $grouped_files[$i][4] } };
+
+        my $input_valid_pairs;
+        my $input_invalid_pairs;
+        my $input_same_circularised;
+        my $input_same_dangling_ends;
+        my $input_same_fragment_internal;
+        my $input_re_ligation;
+        my $input_contiguous_sequence;
+        my $input_wrong_size;
+        my $input_total_pairs;
+
+        my $input_no_ligation;
+        my $input_no_ligation_internal_re2;
+        my $input_unclassified;
+        my $input_unmapped;
+        my $input_self_ligation;
+
+        my $input_deduplication_read_pairs_all;
+        my $input_deduplication_cis_close_all;
+        my $input_deduplication_cis_far_all;
+        my $input_deduplication_trans_all;
+
+        $input_deduplication_read_pairs_all = $data[1];
+        $input_deduplication_cis_close_all  = $data[2];
+        $input_deduplication_cis_far_all    = $data[3];
+        $input_deduplication_trans_all      = $data[4];
+
+        if ($sonication_protocol) {
+            $input_valid_pairs            = $data[1];
+            $input_invalid_pairs          = $data[5];
+            $input_same_circularised      = $data[6];
+            $input_same_dangling_ends     = $data[7];
+            $input_same_fragment_internal = $data[8];
+            $input_re_ligation            = $data[9];
+            $input_contiguous_sequence    = $data[10];
+            $input_wrong_size             = $data[11];
+            $input_total_pairs            = $data[0];
+
+            $new_report =~ s/INPUT_VALID_PAIRS/$input_valid_pairs/g;
+            $new_report =~ s/INPUT_INVALID_PAIRS/$input_invalid_pairs/g;
+            $new_report =~ s/INPUT_SAME_CIRCULARISED/$input_same_circularised/g;
+            $new_report =~ s/INPUT_SAME_DANGLING_ENDS/$input_same_dangling_ends/g;
+            $new_report =~ s/INPUT_SAME_FRAGMENT_INTERNAL/$input_same_fragment_internal/g;
+            $new_report =~ s/INPUT_RE_LIGATION/$input_re_ligation/g;
+            $new_report =~ s/INPUT_CONTIGUOUS_SEQUENCE/$input_contiguous_sequence/g;
+            $new_report =~ s/INPUT_WRONG_SIZE/$input_wrong_size/g;
+            $new_report =~ s/INPUT_TOTAL_PAIRS/$input_total_pairs/g;
+
+        } else {
+            $input_total_pairs              = $data[0];
+            $input_valid_pairs              = $data[1];
+            $input_invalid_pairs            = $data[5];
+            $input_no_ligation              = $data[6];
+            $input_re_ligation              = $data[7];
+            $input_self_ligation            = $data[8];
+            $input_no_ligation_internal_re2 = $data[9];
+            $input_unclassified             = $data[10];
+            $input_wrong_size               = $data[11];
+            $input_unmapped                 = $data[12];
+
+            $new_report =~ s/INPUT_TOTAL_PAIRS/$input_total_pairs/g;
+            $new_report =~ s/INPUT_VALID_PAIRS/$input_valid_pairs/g;
+            $new_report =~ s/INPUT_INVALID_PAIRS/$input_invalid_pairs/g;
+            $new_report =~ s/INPUT_NO_LIGATION/ $input_no_ligation/g;
+            $new_report =~ s/INPUT_RE_LIGATION/$input_re_ligation/g;
+            $new_report =~ s/INPUT_SELF_LIGATION/$input_self_ligation/g;
+            $new_report =~ s/INPUT_INTERNAL_RE2_NO_LIGATION/$input_no_ligation_internal_re2/g;
+            $new_report =~ s/INPUT_UNCLASSIFIED/$input_unclassified/g;
+            $new_report =~ s/INPUT_WRONG_SIZE/$input_wrong_size/g;
+            $new_report =~ s/INPUT_UNMAPPED/$input_unmapped/g;
+        }
+
+        #Substitutions common to both protocols
+        $new_report =~ s/INPUT_DEDUPLICATION_READ_PAIRS_ALL/$input_deduplication_read_pairs_all/g;
+        $new_report =~ s/INPUT_DEDUPLICATION_CIS_CLOSE_ALL/$input_deduplication_cis_close_all/g;
+        $new_report =~ s/INPUT_DEDUPLICATION_CIS_FAR_ALL/$input_deduplication_cis_far_all/g;
+        $new_report =~ s/INPUT_DEDUPLICATION_TRANS_ALL/$input_deduplication_trans_all/g;
+
+        unless ( exists $deduplicator_summary{ $grouped_files[$i][5] } ) {    #Some samples may not pass completely through the pipeline, so go to next loop if file does not exist
+            next;
+        }
+
+        @data = @{ $deduplicator_summary{ $grouped_files[$i][5] } };
+
+        my $input_deduplication_read_pairs_uniques = $data[1];
+        my $input_deduplication_cis_close_uniques  = $data[2];
+        my $input_deduplication_cis_far_uniques    = $data[3];
+        my $input_deduplication_trans_uniques      = $data[4];
+
+        my $percentage_uniques = calc_perc($input_deduplication_read_pairs_uniques, $input_deduplication_read_pairs_all, 2);
+ 
+        $new_report =~ s/INPUT_DEDUPLICATION_READ_PAIRS_UNIQUES/$input_deduplication_read_pairs_uniques/g;
+        $new_report =~ s/INPUT_DEDUPLICATION_CIS_CLOSE_UNIQUES/$input_deduplication_cis_close_uniques/g;
+        $new_report =~ s/INPUT_DEDUPLICATION_CIS_FAR_UNIQUES/$input_deduplication_cis_far_uniques/g;
+        $new_report =~ s/INPUT_DEDUPLICATION_TRANS_UNIQUES/$input_deduplication_trans_uniques/g;
+        $new_report =~ s/INPUT_DEDUPLICATION_PERCENTAGE_UNIQUES/$percentage_uniques/g;
+        $new_report =~ s/INPUT_VERSION/$hicup_module::VERSION/g;
+
+        #Edit the report to remove protocol-specific tags (in curly braces) (non-greedy match).
+        if ($sonication_protocol) {
+            $new_report =~ s/\{DOUBLE_DIGEST_TABLE_START\}[\w\s\n\r\S]*?\{DOUBLE_DIGEST_TABLE_END\}//g;
+        } else {
+            $new_report =~ s/\{SONICATION_TABLE_START\}[\w\s\n\r\S]*?\{SONICATION_TABLE_END\}//g;
+        }
+
+        $new_report =~ s/\{DOUBLE_DIGEST_TABLE_START\}//g;    #Remove remaining tags (non-greedy match)
+        $new_report =~ s/\{DOUBLE_DIGEST_TABLE_END\}//g;
+        $new_report =~ s/\{SONICATION_TABLE_START\}//g;
+        $new_report =~ s/\{SONICATION_TABLE_END\}//g;
+
+        #Edit te di-tag length table
+        if ( $config{shortest} ne '' ) {                      #Remove '-shortest' from the Bowtie argument
+            $config{shortest} =~ s/--shortest//;
+            $new_report =~ s/INPUT_WIDTH_DITAG_LENGTH_SHORTEST/1/g;
+            $new_report =~ s/INPUT_DITAG_LENGTH_SHORTEST/$config{shortest}/g;
+        } else {
+            $new_report =~ s/INPUT_WIDTH_DITAG_LENGTH_SHORTEST/0/g;
+            $new_report =~ s/INPUT_DITAG_LENGTH_SHORTEST/0/g;    #Setting width to 0 makes the line invisible on the chart
+        }
+
+        if ( $config{longest} ne '' ) {
+            $config{longest} =~ s/--longest//;                    #Remove '-longest' from the Bowtie argument
+            $new_report =~ s/INPUT_WIDTH_DITAG_LENGTH_LONGEST/1/g;
+            $new_report =~ s/INPUT_DITAG_LENGTH_LONGEST/$config{longest}/g;
+        } else {
+            $new_report =~ s/INPUT_WIDTH_DITAG_LENGTH_LONGEST/0/g;
+            $new_report =~ s/INPUT_DITAG_LENGTH_LONGEST/0/g;     #Setting width to 0 makes the line invisible on the chart
+        }
+
+        #Open the ditag length temporary file to determine the di-tag lengths
+        #Reset the outdir/temp directory setting as required
+        if ( hasval( $config{temp} ) ) {
+            $config{outdir} = $config{temp};            #Look in temp directory
+            $outdir_flag = "-outdir $config{outdir}";
+        }
+
+        my $ditag_length_summary = ( fileNamer( $grouped_files[$i][4], \%config, 'filter', 0, 0, 0, 1, 0 ) )[1];    #The second temp file
+		$ditag_length_summary = $config{outdir} . $ditag_length_summary;
+		
+        open( DITAG_SUMMARY, '<', $ditag_length_summary ) or die "Could not open $ditag_length_summary : $!";
+
+        scalar <DITAG_SUMMARY>;                                                                                     #Ignore header
+        my %ditag_length_frequencies;
+
+        while (<DITAG_SUMMARY>) {
+            chomp;
+            my ( $length, $frequency ) = split(/\t/);
+            $ditag_length_frequencies{$length} = $frequency;
+        }
+
+        close DITAG_SUMMARY or warn "Could not close $ditag_length_summary : $!";
+
+        my $ditag_data_string = '';                                                                                 #Data string to add to the HTML file
+        foreach my $length ( sort { $a <=> $b } keys %ditag_length_frequencies ) {
+            $ditag_data_string .= '[' . $length . ', ' . $ditag_length_frequencies{$length} . '],';
+        }
+
+        $ditag_data_string =~ s/,$//;                                                                               #Remove trailing comma
+        unlink $ditag_length_summary or warn "Could not delete $ditag_length_summary : $!";
+        $new_report =~ s/INPUT_DITAG_LENGTH_DATA/$ditag_data_string/g;
+        print HTML_REPORT $new_report;
+        close HTML_REPORT or die "Could not close filehandle on 'htmlFilename' :$!";
+
+        #Print the text report
+	    my $percentage_mapped = calc_perc($input_paired_read_1, $input_total_reads_1, 2);
+	    my $percentage_valid = calc_perc($input_valid_pairs, $input_paired_read_1, 2);
+	    my $percentage_ditags_passed_through_hicup = calc_perc($input_deduplication_read_pairs_uniques, $input_total_reads_1, 2);
+	    my $percentage_trans = calc_perc($input_deduplication_trans_uniques, $input_deduplication_read_pairs_uniques, 2);
+
+        if($sonication_protocol){
+			print TEXT_REPORT (join("\t", ($final_file, $input_total_reads_1, $input_total_reads_2, $input_not_truncated_reads_1, $input_not_truncated_reads_2, $input_truncated_read_1, $input_truncated_read_2, $input_average_length_truncated_1, $input_average_length_truncated_2, $input_too_short_to_map_read_1, $input_too_short_to_map_read_2, $input_unique_alignments_read_1, $input_unique_alignments_read_2, $input_multiple_alignments_read_1, $input_multiple_alignments_read_2, $input_failed_to_align_read_1, $input_failed_to_align_read_2, $input_paired_read_1, $input_paired_read_2, $input_valid_pairs, $input_invalid_pairs, $input_same_circularised, $input_same_dangling_ends, $input_same_fragment_internal, $input_re_ligation, $input_contiguous_sequence, $input_wrong_size, $input_deduplication_read_pairs_uniques, $input_deduplication_cis_close_uniques, $input_deduplication_cis_far_uniques, $input_deduplication_trans_uniques, $percentage_mapped, $percentage_valid, $percentage_uniques, $percentage_trans, $percentage_ditags_passed_through_hicup)));
+			print TEXT_REPORT "\n";
+		}else{
+			print TEXT_REPORT (join("\t", ($final_file, $input_total_reads_1, $input_total_reads_2, $input_not_truncated_reads_1, $input_not_truncated_reads_2, $input_truncated_read_1, $input_truncated_read_2, $input_average_length_truncated_1, $input_average_length_truncated_2, $input_too_short_to_map_read_1, $input_too_short_to_map_read_2, $input_unique_alignments_read_1, $input_unique_alignments_read_2, $input_multiple_alignments_read_1, $input_multiple_alignments_read_2, $input_failed_to_align_read_1, $input_failed_to_align_read_2, $input_paired_read_1, $input_paired_read_2, $input_valid_pairs, $input_invalid_pairs, $input_wrong_size, $input_no_ligation, $input_no_ligation_internal_re2, $input_unclassified, $input_unmapped, $input_self_ligation, $input_deduplication_read_pairs_uniques, $input_deduplication_cis_close_uniques, $input_deduplication_cis_far_uniques, $input_deduplication_trans_uniques, $percentage_mapped, $percentage_valid, $percentage_uniques, $percentage_trans, $percentage_ditags_passed_through_hicup)));
+			print TEXT_REPORT "\n";
+		}
+    }
+ 	close TEXT_REPORT or die "Could not close filehandle on 'textFilename' :$!";
+
+
+} else {
+    warn "Skipping HiCUP pipeline summary reports, could not locate $Bin/hicup_report.html.\n";
+}
+
+
+#Clean up the --temp output folder and move relevant files to the output directory
+if ( hasval( $config{temp} ) ) {
+    $config{outdir} = $config{originalOutdir};    #Use original output directory
+    !system("mv $config{temp}/*.svg $config{temp}/*summary* $config{outdir}")
+      or warn "Could not tidy temporary folder folder with command: 'mv $config{temp}/*.svg $config{temp}/*summary* $config{outdir}' : $!";
+    remove_tree $config{temp} or warn "Could not delete temporary folder '$config{temp} with the command: 'remove_tree $config{temp}' : $!";
+}
+
+print "HiCUP processing complete.\n" unless $config{quiet};
+
+exit(0);
+
+#######################################################################################
+#Subroutines                                                                          #
+#######################################################################################
+
+############################
+#Subroutine "check_parameters":
+#Check the user supplied parameters are ok
+#Uses global variables
+sub check_parameters {
+
+    my $parameters_ok = 1;
+
+    $parameters_ok = 0 unless ( checkAligner( \%config ) );
+    $parameters_ok = 0 unless ( checkAlignerIndices( \%config ) );
+
+    if ( hasval( $config{format} ) ) {    #Check specified FASTQ format is valid
+        $parameters_ok = 0 unless ( determineAlignerFormat( $config{format} ) );
+    } else {                              #If FASTQ quality format not specified, determine this automatically
+        my @sequence_files = %files;
+        warn "FASTQ quality format not specified, analysing file '$sequence_files[0]' to predict file format used\n";
+        $config{format} = quality_checker( $sequence_files[0] );
+
+        if ( $config{format} eq 0 ) {
+            die "Unable to determine FASTQ quality format, please specify this and re-run HiCUP.\n";
+        } else {
+            warn "FASTQ quality set to '$config{format}'\n";
+        }
+    }
+
+    unless ( $config{digest} ) {
+        print "Please specify a genome digest file.\n";
+        $parameters_ok = 0;
+    }
+    unless ( hasval( $config{index} ) ) {
+        print "Please specify reference genome indices for mapping.\n";
+        $parameters_ok = 0;
+    }
+
+    if ( $config{longest} ne '' ) {
+        unless ( $config{longest} =~ /^\d+$/ ) {
+            print "'Longest' needs to specify the insert length in base pairs (i.e. is an integer)\n";
+            $parameters_ok = 0;
+        }
+    }
+
+    if ( $config{shortest} ne '' ) {
+        unless ( $config{shortest} =~ /^\d+$/ ) {
+            print "'Shortest' needs to specify the insert length in base pairs (i.e. is an integer)\n";
+            $parameters_ok = 0;
+        }
+    }
+
+    if ( ( $config{longest} ne '' ) and ( $config{shortest} ne '' ) ) {
+        if ( $config{longest} =~ /^\d+$/ and $config{shortest} =~ /^\d+$/ ) {
+            unless ( $config{shortest} < $config{longest} ) {
+                print "The shortest allowable insert size should be smaller than the longest allowable insert size.\n";
+                $parameters_ok = 0;
+            }
+        }
+    }
+
+    if ( $config{sequence} ne '' ) {
+        my @ligation_sequences = split( /,/, $config{sequence} );    #Add directly to the global variable
+
+        #Check all the ligation sequences are in the valid format ATCG_ATCG, where before '_' denotes sequence present in the genome reference
+        foreach my $sequence (@ligation_sequences) {
+            unless ( $sequence =~ /^[ATCG_]+$/ ) {
+                warn "The ligation sequence $sequence is not a valid DNA sequence.\n";
+                $parameters_ok = 0;
+            }
+            unless ( ( $sequence =~ tr/\_// ) == 1 ) {
+                warn "The ligation sequence should define the position where the ligation sequence no longer matches the genome reference - denoted by \'_\'.\n";
+                $parameters_ok = 0;
+            }
+        }
+    }
+
+    if ( $config{threads} ne '' ) {
+        unless ( $config{threads} =~ /^\d+$/ ) {
+            print "The specified 'Threads' value needs to be an integer.\n";
+            $parameters_ok = 0;
+        } else {
+            $config{threads} = "-threads $config{threads}";
+        }
+    } else {
+        $config{threads} = '-threads 1';
+    }
+
+    if ( $config{quiet} ne '' ) {    #May be defined as 0 in the config file
+        unless ( $config{quiet} ) {
+            $config{quiet} = '';
+        }
+    }
+
+    if ( $config{nofill} ne '' ) {    #May be defined as 0 in the config file
+        unless ( $config{nofill} ) {
+            $config{nofill} = '';
+        }
+    }
+
+    #Check SAMtools is installed
+    if ( !system "which samtools >/dev/null 2>&1" ) {
+        $config{samtools} = `which samtools`;
+        chomp $config{samtools};
+    } else {
+        warn "Could not find SAMtools (http://samtools.sourceforge.net), please install if you wish to compress SAM files to BAM format\n";
+
+    }
+
+    #Check R installed
+    checkR( \%config );
+
+    #Check the output directory exists and allows write access
+    if ( $config{outdir} ne '' ) {
+        unless ( -d $config{outdir} ) {
+            warn "Output directory '$config{outdir}' does not exist\n";
+            $parameters_ok = 0;
+        }
+
+        unless ( $config{outdir} =~ /\/$/ ) {    #Make sure that $config{outdir} ends with the forward slash character
+            $config{outdir} .= '/';
+        }
+    }
+
+    if ( hasval( $config{temp} ) ) {
+        if ( $config{keep} ) {
+            warn "Option --temp may not be specified if --keep is also specified\n";
+            $parameters_ok = 0;
+        } else {
+            unless ( -d $config{temp} ) {
+                warn "Temporary directory '$config{temp}' does not exist\n";
+                $parameters_ok = 0;
+            }
+        }
+    }
+
+    return $parameters_ok;
+}
+
+########################################
+#Subroutine "filename_string_generator":
+#Receives a hash of paired filenames which it uses to creates a string of the files to
+#process. It also checks if those files are empty and if so removes them from the
+#pipeline.
+sub filename_string_generator {
+
+    my (%filename_pairs) = @_;
+    my $filenames_string = "";
+
+    foreach my $filename1 ( keys %filename_pairs ) {
+        my $filename2 = $filename_pairs{$filename1};
+
+        #$filename1 = $config{outdir} . $filename1;
+        #$filename2 = $config{outdir} . $filename2;
+
+        my $filename1_contains_data = 0;
+        my $filename2_contains_data = 0;
+
+        unless ( ( -e $filename1 ) and ( -e $filename2 ) ) {    #Only check filesize of files that exist
+            next;
+        }
+
+        #Identify empty unzipped/zipped files
+        if ( $filename1 =~ /\.gz$/ ) {
+            if ( ( -s $filename1 ) > 100 ) {                    #Only perform check on small files
+                $filename1_contains_data = 1;
+            } else {
+                open( FILENAME1, "zcat $filename1 |" ) or die "Couldn't read file '$filename1' : $!";
+                while (<FILENAME1>) {
+
+                    if ( $_ =~ /\S/ ) {
+                        $filename1_contains_data = 1;
+                    }
+                }
+                close FILENAME1;
+            }
+
+            if ( ( -s $filename2 ) > 100 ) {    #    Only perform check on small files
+                $filename2_contains_data = 1;
+            } else {
+                open( FILENAME2, "zcat $filename2 |" ) or die "Couldn't read file '$filename2' : $!";
+                while (<FILENAME2>) {
+                    if ( $_ =~ /\S/ ) {
+                        $filename2_contains_data = 1;
+                    }
+                }
+                close FILENAME2;
+            }
+        } else {
+            if ( -s $filename1 ) {
+                $filename1_contains_data = 1;
+            }
+            if ( -s $filename2 ) {
+                $filename2_contains_data = 1;
+            }
+        }
+        unless ($filename1_contains_data) {
+            warn "$filename1 contains no data\n";
+        }
+        unless ($filename2_contains_data) {
+            warn "$filename2 contains no data\n";
+        }
+        unless ( $filename1_contains_data + $filename2_contains_data == 2 ) {
+            warn "$filename1 and $filename2 shall be processed no further\n";
+        } else {
+            $filenames_string .= "$filename1 $filename2 ";
+        }
+    }
+
+    if ( $filenames_string eq "" ) {
+        die "The remaining files in the HiCUP pipeline contain no data. Processing terminated.\n";
+    } else {
+        return $filenames_string;
+    }
+}
+
+#################################################
+#Subroutine "filename_string_generator_unpaired":
+#receives filenames that do not need pairing (e.g. '.pair' files) which it uses to create
+#a string of the files to process. It also checks if those files are empty and, if so,
+#removes them from the pipeline.
+sub filename_string_generator_unpaired {
+
+    my @input_files      = @_;
+    my $filenames_string = "";
+
+    foreach my $inputfile (@input_files) {
+        $inputfile = $inputfile;
+
+        unless ( -e $inputfile ) {    #Only check filesize of files that exist
+            next;
+        }
+
+        if ( ( -s $inputfile ) < 10000 ) {    #Only check whether small files contain data
+
+            #Open the inputfile
+            if ( $inputfile =~ /\.gz$/ ) {    #Compressed SAM file
+                open( INPUTFILE, "zcat $inputfile |" ) or die "Couldn't read file '$inputfile' : $!";
+            } elsif ( $inputfile =~ /\.bam$/ ) {    #BAM file
+                open( INPUTFILE, "$config{samtools} view -h $inputfile |" ) or die "Couldn't read file '$inputfile' : $!";
+            } else {                                #SAM file
+                open( INPUTFILE, $inputfile ) or die "Couldn't read file '$inputfile' : $!";
+            }
+
+            #Check whether the file contains data i.e. a line not beginning with '@'
+            my $data_present = 0;
+            while (<INPUTFILE>) {
+                if (/^@/) {
+                    next;
+                }
+                if (/\S/) {
+                    $data_present = 1;              #Data found
+                    last;
+                }
+            }
+
+            if ($data_present) {
+                $filenames_string .= "$inputfile ";
+            } else {
+                warn "$inputfile contains no data\n";
+            }
+        } else {
+            $filenames_string .= "$inputfile ";     #File > 10000 in size, so assumed to contain data
+        }
+    }
+
+    if ( $filenames_string eq "" ) {
+        die "All the files in the HiCUP pipeline have been removed for containing no data.\n";
+    } else {
+        return $filenames_string;
+    }
+}
+
+__DATA__
+
+HiCUP homepage: www.bioinformatics.babraham.ac.uk/projects/hicup
+
+SYNOPSIS
+
+hicup is used to run the whole HiCUP pipeline
+
+hicup [OPTIONS]... -config [CONFIGURATION FILE]...
+hicup [OPTIONS]... [FILES]
+
+FUNCTION
+
+The HiCUP pipeline receives FASTQ files and generates Hi-C paired read (di-tag)
+files. The hicup script regulates the pipeline, passing output from one script to 
+the next. 
+
+The HiCUP pipeline uses a configuration file to set the mapping and filtering 
+parameters. To produce an example configuration file:
+
+hicup --example
+
+Parameters may also be passed to HiCUP via the command line, overriding those 
+specified in the configuration file. FASTQ file pairs should be place next to 
+each other when using the command line, or on adjacent lines in the configuration 
+file.
+
+COMMAND LINE OPTIONS
+
+--bowtie       Specify the path to Bowtie
+--bowtie2      Specify the path to Bowtie 2
+--config       Specify the configuration file
+--digest       Specify the digest file listing restriction fragment co-ordinates
+--example      Produce an example configuration file
+--format       Specify FASTQ format
+               Options: Sanger, Solexa_Illumina_1.0, Illumina_1.3, Illumina_1.5
+--help         Print help message and exit
+--index        Path to the relevant reference genome Bowtie/Bowtie2 indices
+--keep         Keep intermediate pipeline files
+--longest      Maximum allowable insert size (bps)
+--nofill       Hi-C protocol did NOT include a fill-in of sticky ends prior to 
+               ligation step and therefore FASTQ reads shall be truncated at the 
+               Hi-C restriction enzyme cut site (if present) sequence is 
+               encountered
+--outdir       Directory to write output files
+--quiet        Suppress progress reports (except warnings)
+--shortest     Minimum allowable insert size (bps)
+--temp         Write intermediate files (i.e. all except summary files and files
+               generated by HiCUP Deduplicator) to a specified directory
+--threads      Specify the number of threads, allowing simultaneous processing 
+               of multiple files
+--version      Print the program version and exit
+--zip          Compress output
+
+Full instructions on running the pipeline can be found at:
+www.bioinformatics.babraham.ac.uk/projects/hicup
+
+Steven Wingett, Babraham Institute, Cambridge, UK (steven.wingett@babraham.ac.uk)

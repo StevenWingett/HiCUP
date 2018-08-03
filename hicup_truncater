@@ -1,0 +1,512 @@
+#!/usr/bin/perl
+
+use strict;
+use warnings;
+use Getopt::Long;
+use POSIX ":sys_wait_h";    #for nonblocking read
+use FindBin '$Bin';
+use lib $Bin;
+use hicup_module;
+use hicup_module qw(hashVal);
+
+use Data::Dumper;
+
+###################################################################################
+###################################################################################
+##This file is Copyright (C) 2018, Steven Wingett (steven.wingett@babraham.ac.uk)##
+##                                                                               ##
+##                                                                               ##
+##This file is part of HiCUP.                                                    ##
+##                                                                               ##
+##HiCUP is free software: you can redistribute it and/or modify                  ##
+##it under the terms of the GNU General Public License as published by           ##
+##the Free Software Foundation, either version 3 of the License, or              ##
+##(at your option) any later version.                                            ##
+##                                                                               ##
+##HiCUP is distributed in the hope that it will be useful,                       ##
+##but WITHOUT ANY WARRANTY; without even the implied warranty of                 ##
+##MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the                  ##
+##GNU General Public License for more details.                                   ##
+##                                                                               ##
+##You should have received a copy of the GNU General Public License              ##
+##along with HiCUP.  If not, see <http://www.gnu.org/licenses/>.                 ##
+###################################################################################
+###################################################################################
+
+##########################################################
+#Get user-supplied parameters
+#Option variables
+my %config = (
+    nofill    => '',
+    config    => '',
+    datestamp => '',
+    example   => '',
+    help      => '',
+    keep      => '',
+    outdir    => '',
+    quiet     => '',
+    seq_trunc => '',
+    re1       => '',
+    r         => '',
+    threads   => '',
+    version   => '',
+    zip       => ''
+);
+
+my $config_result = GetOptions(
+    "nofill"      => \$config{nofill},
+    "config=s"    => \$config{config},
+    "example"     => \$config{example},
+    "datestamp=s" => \$config{datestamp},
+    "help"        => \$config{help},
+    "keep"        => \$config{keep},
+    "outdir=s"    => \$config{outdir},
+    "quiet"       => \$config{quiet},
+    "re1=s"       => \$config{re1},
+    "sequence=s"  => \$config{seq_trunc},
+    "r=s"         => \$config{r},
+    "threads=i"   => \$config{threads},
+    "version"     => \$config{version},
+    "zip"         => \$config{zip}
+);
+
+die "Could not parse options" unless ($config_result);
+
+$config{help} = 1 unless ( hashVal(%config) );    #Print help and exit if no command line parameters
+
+if ( $config{help} ) {
+    print while (<DATA>);
+    exit(0);
+}
+
+#Print version and exit
+if ( $config{version} ) {
+    print "HiCUP Truncater v$hicup_module::VERSION\n";
+    exit(0);
+}
+
+if ( $config{example} ) {
+    print_example_config_file('truncater_example.conf');
+    exit(0);
+}
+
+if ( $config{threads} eq '' ) {
+    $config{threads} = 1;
+}
+
+#########################################################################################
+#Read the config file to identify the sequences to be screened and the ligation boundary
+#Config file name passed as a command line argument
+#Process the configuration file
+my @filenames;
+if ( hasval( $config{config} ) ) {
+    @filenames = process_config( $config{config}, \%config );    #Modifies %config and returns an array of the filenames
+    
+    if ( scalar @filenames % 2 ) {
+        die "There needs to be an even number of files in the configuration file, see hicup --help for more details.\n";
+    }
+}
+
+
+if (@ARGV) {
+    if ( scalar @ARGV % 2 ) {
+        die "There needs to be an even number of files specified in the command line, see hicup_truncater --help for more details.\n";
+    }
+    push( @filenames, @ARGV );                                   #Add filenames specified in the command line to those in the configuration file
+}
+
+unless ( check_files_exist( \@filenames, 'EXISTS' ) ) {
+    die "Please adjust configuration.\n";
+}
+
+my %files = @filenames;                                          #%files : hash of paired forward and reverse files
+my ( $before_cut, $after_cut ) = check_re1();
+my @ligation_sequences;
+
+#Check the output directory exists
+if ( $config{outdir} ne '' ) {
+    unless ( -d $config{outdir} ) {
+        die "Output directory '$config{outdir}' does not exist or is not writable.\n";
+    }
+
+    #Make sure that $outdir ends with the forward slash character
+    unless ( $config{outdir} =~ /\/$/ ) {
+        $config{outdir} .= '/';
+    }
+} else {
+    $config{outdir} = './';    #Make current directory if none specified
+}
+
+#Check R installed
+checkR( \%config );
+
+#Determine the ligation boundary sequence
+my $ligsite;
+if ( $config{seq_trunc} eq '' ) {    #$origseq and $before_cut only required if Hi-C ligation junction determined computationally
+    if ($config{nofill}) {
+        $ligsite = $config{re1};     #Fill-in not performed, ligation junction is the original restriction site sequence
+        $ligsite =~ s/\^//g;         #Remove the caret from the ligation sequence
+    } else {
+        $ligsite = fill_end( $config{re1} );
+    }
+    $config{re1} =~ s/\^//g;         #Remove the caret from the restriction site
+}
+
+print "Truncating with HiCUP Truncater v$hicup_module::VERSION\n" unless ($config{quiet});
+print "Truncating sequences at occurrence of sequence '$ligsite'\n" unless ( $config{quiet} );
+
+#Before processing the sequence file check whether the output output files
+#(yet to be generated) don't already exist.  Doing this now means the
+#program will less likely fail during the middle of sequence file processing
+foreach my $filename (@filenames) {
+
+    $filename = fileNamer( $filename, \%config, 'truncater' );
+    $filename = $config{outdir} . $filename;    #Add output directory filename
+
+    if ( -e $filename ) {
+        die "Outputfile \'$filename\' already exists. Please delete or rename file.\n";
+    }
+}
+
+#Create a date-stamped summary file
+if ( $config{datestamp} eq '' ) {
+    $config{datestamp} = datestampGenerator();
+}
+
+my ($summaryfile) = fileNamer( 'SUMMARY', \%config, 'truncater', 0, 1, 0, 0, 0 );    #Will return an array
+$summaryfile = $config{outdir} . $summaryfile;
+
+if ( -e "$summaryfile" ) {
+    die "Summary file \'$summaryfile\' already exists. Please delete or rename file.\n\n";
+}
+
+open( SUMMARY, ">$summaryfile" ) or die "Could not write to $summaryfile\n";
+print SUMMARY "File\tTotal_Reads_Processed\tTruncated\t%Truncated\tNot_truncated\t%Not_truncated\tAverage_length_truncated_sequence\n";
+close SUMMARY or die "Could not close filehandle on summary file '$summaryfile' : $!";
+
+#Process the sequence file(s)
+print "Truncating sequences\n" unless ( $config{quiet} eq '1' );
+
+my $terminate = 0;    #Instruct script to die if error detected in child process
+my %children;         #Hash of child processes
+foreach my $fileF ( keys %files ) {
+    my @pair = ( $fileF, $files{$fileF} );
+    foreach my $inputfile (@pair) {
+
+        my $pid = fork();
+        die "cannot fork" unless defined $pid;
+
+        if ( $pid == 0 ) {
+            process_file($inputfile);
+            exit 0;
+        } else {
+            $children{$pid} = 1;
+            while ( keys(%children) == $config{threads} ) {
+                sleep(1);
+                reaper();
+            }
+        }
+    }
+}
+
+#Make sure all child processes have terminated before exiting
+do {
+    sleep(1);
+    reaper();
+} until ( keys(%children) == 0 );
+
+print "Truncating complete\n" unless ( $config{quiet} eq 1 );
+
+exit(0);
+
+#####################################################ls##################################
+##################################
+#Subroutines                                                                          #
+#######################################################################################
+
+sub check_re1 {
+
+    $config{re1} =~ s/\s//g;    #Edit variable (declared outside of subroutine)
+    $config{re1} =~ tr/atcg/ATCG/;
+    chomp $config{re1};
+
+    #Check this is a nucleotide sequence with a cut site
+    unless ( $config{re1} =~ /^[ATCG\^]+$/ ) {
+        die "The restriction site '$config{re1}' is not a valid DNA sequence.\n";
+    }
+
+    unless ( ( $config{re1} =~ tr/\^// ) == 1 ) {
+        die "The restriction site should contain one cut position, denoted by \'^\'.\n";
+    }
+
+    #Determine the bases up until the cut site i.e. where a truncated sequence ends
+    my ( $before_cut, $after_cut ) = split( /\^/, $config{re1} );
+
+    return ( $before_cut, $after_cut );
+}
+
+#######################
+#Subroutine "fill_end":
+#The ligation sequence is the result of cutting DNA with a restriction
+#enzyme, filling-in the overhangs and then performing a blunt-ended ligation.
+#For example, BglII (5'-A^GATCT-3') cuts between A and G. So, the ligation
+#sequence will be: A + GATC + GATC + T = AGATCGATCT.
+sub fill_end {
+
+    my $rest_site = $_[0];
+
+    my $five_prime_flank;     #Sequence upstream of the cut site
+    my $fill_in;              #Sequence created by filling-in the overhang
+    my $three_prime_flank;    #Sequence downstream of the cut site
+    my $ligation_sequence;    #Potentially new sequence created at the ligation interface
+
+    #Determine where the restriction enzyme cuts the sequence,
+    #then remove the caret ("^") symbol
+    $rest_site =~ /\^/g;
+    my $cut_position = pos($rest_site);
+    $rest_site =~ s/\^//g;
+
+    #Determine the "fill-in" sequence
+    my $number_bases_before_cut = $cut_position - 1;
+    my $number_bases_after_cut  = length($rest_site) - $number_bases_before_cut;
+    my $flank_size;
+
+    if ( $number_bases_before_cut > ( length($rest_site) / 2 ) ) {    #Is the flanking sequence the length of the sequence BEFORE or AFTER the cut?
+        $flank_size = $number_bases_after_cut;
+    } else {
+        $flank_size = $number_bases_before_cut;
+    }
+
+    $five_prime_flank = substr( $rest_site, 0, $flank_size );
+    $three_prime_flank = substr( $rest_site, ( $flank_size - ( 2 * $flank_size ) ) );
+    $fill_in = substr( $rest_site, $flank_size, ( length($rest_site) - ( 2 * $flank_size ) ) );
+
+    #Deduce the ligation sequence.  If the restriction enzyme cuts immediately adjacent
+    #to the restriction site the fill-in region is the same as the flanking region and
+    #so the fill-in region only needs to be included once.
+    if ($flank_size) {
+        $ligation_sequence = $five_prime_flank . $fill_in . $fill_in . $three_prime_flank;
+    } else {
+        $ligation_sequence = $five_prime_flank . $fill_in . $three_prime_flank;
+    }
+    return $ligation_sequence;
+}
+
+###########################
+#Subroutine "process_file":
+#Truncates DNA sequences containing the putative Hi-C ligation sequence
+sub process_file {
+
+    my $inputfile = $_[0];
+
+    #Create variables for counting the number of sequences truncated/not truncated
+    my $reads_processed = 0;
+    my $truncated       = 0;
+    my $not_truncated   = 0;
+
+    #Array to calculate average size of a truncated sequence - [0]:Sum of lengths; [1]:Number of truncated sequences
+    my @truncated_lengths;
+
+    #Check whether the input file is zipped and then open accordingly
+    if ( $inputfile =~ /\.gz$/ ) {
+        open( IN, "zcat $inputfile |" ) or die "Couldn't read file \'$inputfile\' : $!";
+    } elsif ( $inputfile =~ /\.bz2$/ ) {
+        open( IN, "bzcat $inputfile |" ) or die "Couldn't read file \'$inputfile\' : $!";
+    } else {
+        open( IN, $inputfile ) or die "Couldn't read file \'$inputfile\' : $!";
+    }
+
+    print "Truncating $inputfile\n" unless ( $config{quiet} eq '1' );
+
+    #Open the output file
+    #my $outputfile;
+
+    #($outputfile = $inputfile) =~ s/\.gz$|\.bz2$//;
+    #$outputfile =~ s/^.+\///;    #Remove folder references
+    #$outputfile =~ s/\.fq|\.fastq$//; #Remove .fq or .fastq file extension
+    #$outputfile .= "_trunc";
+    my $outputfile = fileNamer( $inputfile, \%config, 'truncater' );
+
+    $outputfile = $config{outdir} . $outputfile;
+
+    if ( $config{zip} eq '1' ) {
+        open( OUT, "| gzip -c - > $outputfile" ) or die "Couldn't write to file '$outputfile': $!";
+    } else {
+        open( OUT, ">$outputfile" ) or die "Couldn't write to file '$outputfile' : $!";
+    }
+
+    #Truncates the sequence (and quality scrore) up until and including the
+    #restriction site, writing the results into a new file.
+    while (<IN>) {
+        if ( /^@/ or /^[ATCG]+_/ or /^NO_BARCODE_/ ) {
+            my $line1 = $_;
+            my $line2 = scalar <IN>;
+            my $line3 = scalar <IN>;
+            my $line4 = scalar <IN>;
+
+            chomp $line2;
+            chomp $line4;
+
+            $reads_processed++;
+
+            if ( $config{seq_trunc} ne '' ) {    #Process differently depending on whether the user provides ligation sequences
+                my $truncation_occurred = 0;     #Boolean flag to determine whether the truncation occurred
+                                                 #Loop through all the ligation junctions and truncate at the position where the ligation juction differs from the reference: '_'
+                my @truncated;
+
+                foreach my $sequence (@ligation_sequences) {
+                    my $sequence_no_underscore = $sequence;
+                    $sequence_no_underscore =~ s/_//g;    #Remove the '_' delimit symbol from the sequence
+                    my ($length_same) = split( /_/, $sequence );
+                    $length_same = length($length_same);    #Number of bases in which the ligation junction and reference genome correspond before first mismatch
+
+                    my $line2_temp = $line2;                #Create temp line to avoid cutting $line2
+                    @truncated = split( /$sequence_no_underscore/, $line2_temp );    #Cut the sequence
+                    unless ( ( length $line2 ) == ( length $truncated[0] ) ) {       #Has the sequence been cut?
+                        $length_same += length $truncated[0];                        #Length the same is now the length of the read which matched the reference genome
+                        $line2 = substr( $line2, 0, $length_same );
+                        $line4 = substr( $line4, 0, $length_same );
+                        $truncation_occurred = 1;
+                    }
+
+                }
+
+                if ($truncation_occurred) {
+                    $truncated_lengths[0] += length $line2;
+                    $truncated_lengths[1]++;
+                    $truncated++;
+                } else {
+                    $not_truncated++;
+                }
+
+            } else {
+
+                #Finds the ligation site, if present, and truncates accordingly
+                #(swapping the ligation sequence for the restriction site up until the cut site).
+                #Counts the sequences truncated/not-truncated.
+                my @truncated = split( /$ligsite/, $line2 );
+
+                unless ( ( length $line2 ) == ( length $truncated[0] ) ) {
+                    $line2 = $truncated[0] . $config{re1};
+                    $line4 = substr( $line4, 0, ( length $line2 ) );
+                    $truncated_lengths[0] += length $line2;
+                    $truncated_lengths[1]++;
+                    $truncated++;
+                } else {
+                    $not_truncated++;
+                }
+
+            }
+            print OUT $line1 . $line2 . "\n" . $line3 . $line4 . "\n";
+        }
+    }
+
+    #Close input and output files
+    close IN  or die "Could not close filehandle on '$inputfile' : $!";
+    close OUT or die "Could not close filehandle on '$outputfile' : $!";
+
+    #Write results to the summary file
+    my $percent_trunc;
+    my $percent_not_trunc;
+    my $average_trunc_length;
+
+    if ($reads_processed) {    #Avoid division by zero errors
+
+        $percent_trunc     = $truncated /     ($reads_processed) * 100;
+        $percent_not_trunc = $not_truncated / ($reads_processed) * 100;
+        if ($truncated) {      #Avoid division by zero errors
+            $average_trunc_length = $truncated_lengths[0] / $truncated_lengths[1];
+        } else {
+            $average_trunc_length = 0;
+        }
+    } else {
+        $percent_trunc        = 0;
+        $percent_not_trunc    = 0;
+        $average_trunc_length = 0;
+    }
+
+    open( SUMMARY, ">>$summaryfile" ) or die "Could not write to $summaryfile : $!";
+
+    my $filename_for_summary = ( split( /\//, $inputfile ) )[-1];    #Removes folder extensions
+    print SUMMARY "$filename_for_summary\t$reads_processed\t$truncated\t";
+    printf SUMMARY "%.2f", $percent_trunc;
+    print SUMMARY "\t$not_truncated\t";
+    printf SUMMARY "%.2f", $percent_not_trunc;
+    print SUMMARY "\t";
+    printf SUMMARY "%.2f", $average_trunc_length;
+    print SUMMARY "\n";
+    close SUMMARY or die "Could not close filehandle on '$summaryfile' : $!";
+
+    #Produce summary graph
+    unless ( $config{r} eq '0' ) {                                   #R not installed/found
+        my $command = $config{r} . 'script ' . "$Bin/r_scripts/hicup_truncater_summary.r $config{outdir} $summaryfile";
+        !system("$command") or warn "Could not produce hicup_truncater summary bar chart: $command: $!";
+    }
+}
+
+#####################
+#Subroutine "reaper":
+#reaps dead child processes
+sub reaper {
+
+    #Don't change $! and $? outside handler
+    local ( $!, $? );
+    my $pid = waitpid( -1, WNOHANG );
+    return if $pid == -1;
+    unless ( defined $children{$pid} ) {
+        return;
+    } else {
+        my $exit_value = $? >> 8;
+        if ($exit_value) {
+            $terminate = 1;
+        }
+        delete $children{$pid};
+    }
+}
+
+__DATA__
+
+HiCUP homepage: www.bioinformatics.babraham.ac.uk/projects/hicup
+
+SYNOPSIS
+
+hicup_truncater script terminates reads at Hi-C ligation junctions
+
+hicup_truncater [OPTIONS]... -config [CONFIGURATION FILE]...
+hicup_truncater [OPTIONS]... [FASTQ FILE PAIRS]...
+
+FASTQ file pairs should be place next to each other when using the command line, or
+on adjacent lines in the configuration file.
+
+FUNCTION
+
+Valid Hi-C pairs comprise two DNA fragments from different regions of the genome 
+ligated together. The hicup_truncater script identifies ligation junctions within 
+reads and deletes sequences downstream of the restriction enzyme recognition 
+sequence. 
+
+The names of the files to be processed and the restriction enzyme recogniton site 
+may be passed tonthe scrip using a configuration file or command line arguments.
+
+COMMAND LINE OPTIONS
+
+--config         Name of the optional configuration file
+--help           Print program help and exit
+--nofill         Hi-C protocol did NOT include a fill-in of sticky ends prior to 
+                 re-ligation and therefore reads shall be truncated at
+                 the restriction site sequence
+--outdir         Directory to write output files
+--quiet          Suppress all progress reports
+--re1            Restriction enzyme recognition sequence
+--sequences      Instead of specifying a restriction enzyme recognition sequence,
+                 specify the ligation sequences directly
+--threads        Number of threads to use, allowing simultaneous processing  of 
+                 different files
+--version        Print the program version and exit
+--zip            Compress output using gzip
+
+Full instructions on running the pipeline can be found at:
+www.bioinformatics.babraham.ac.uk/projects/hicup
+
+Steven Wingett, Babraham Institute, Cambridge, UK (steven.wingett@babraham.ac.uk)
+

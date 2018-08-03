@@ -1,0 +1,877 @@
+#!/usr/bin/perl
+
+use strict;
+use warnings;
+use Getopt::Long;
+use POSIX ":sys_wait_h";    #for nonblocking read
+use POSIX;
+use IPC::Open3;
+use IO::Select;
+use FindBin '$Bin';
+use lib $Bin;
+use File::Basename;
+use hicup_module;
+use hicup_module qw(hashVal checkAligner checkAlignerIndices
+  determineAlignerFormat quality_checker);
+
+use Data::Dumper;
+
+###################################################################################
+###################################################################################
+##This file is Copyright (C) 2018, Steven Wingett (steven.wingett@babraham.ac.uk)##
+##                                                                               ##
+##                                                                               ##
+##This file is part of HiCUP.                                                    ##
+##                                                                               ##
+##HiCUP is free software: you can redistribute it and/or modify                  ##
+##it under the terms of the GNU General Public License as published by           ##
+##the Free Software Foundation, either version 3 of the License, or              ##
+##(at your option) any later version.                                            ##
+##                                                                               ##
+##HiCUP is distributed in the hope that it will be useful,                       ##
+##but WITHOUT ANY WARRANTY; without even the implied warranty of                 ##
+##MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the                  ##
+##GNU General Public License for more details.                                   ##
+##                                                                               ##
+##You should have received a copy of the GNU General Public License              ##
+##along with HiCUP.  If not, see <http://www.gnu.org/licenses/>.                 ##
+###################################################################################
+###################################################################################
+
+#Option variables
+my %config = (
+    bowtie    => '',
+    bowtie2   => '',
+    config    => '',
+    example   => '',
+    datestamp => '',
+    format    => '',
+    index     => '',
+    ligation  => '',
+    help      => '',
+    outdir    => '',
+    quiet     => '',
+    samtools  => '',
+    threads   => '',
+    version   => '',
+    r         => '',
+    zip       => ''
+);
+
+my $config_result = GetOptions(
+    "bowtie=s"    => \$config{bowtie},
+    "bowtie2=s"   => \$config{bowtie2},
+    "datestamp=s" => \$config{datestamp},
+    "example"     => \$config{example},
+    "config=s"    => \$config{config},
+    "format=s"    => \$config{format},
+    "index=s"     => \$config{index},
+    "ligation=s"  => \$config{ligation},    #Hidden flag to pass ligation details from HiCUP so hicup_truncater header can be included in the SAM file
+    "outdir=s"    => \$config{outdir},
+    "help"        => \$config{help},
+    "quiet"       => \$config{quiet},
+    "threads=i"   => \$config{threads},
+    "version"     => \$config{version},
+    "r=s"         => \$config{r},
+    "samtools=s"  => \$config{samtools},
+    "zip"         => \$config{zip}
+);
+
+die "Could not parse options.\n" unless ($config_result);
+
+$config{help} = 1 unless ( hashVal(%config) );    #Print help and exit if no command line parameters
+
+if ( $config{help} ) {
+    print while (<DATA>);
+    exit(0);
+}
+
+#Print version and exit
+if ( $config{version} ) {
+    print "HiCUP Mapper v$hicup_module::VERSION\n";
+    exit(0);
+}
+
+if ( $config{example} ) {
+    print_example_config_file('mapper_example.conf');
+    exit(0);
+}
+
+if ( $config{datestamp} eq '' ) {
+    $config{datestamp} = datestampGenerator();
+}
+
+my @filenames;
+if ( hasval( $config{config} ) ) {
+    @filenames = process_config( $config{config}, \%config );    #Modifies %config and returns an array of the filenames
+    if ( scalar @filenames % 2 ) {
+        die "There needs to be an even number of files in the configuration file, see hicup --help for more details.\n";
+    }
+}
+
+if (@ARGV) {
+    if ( scalar @ARGV % 2 ) {
+        die "There needs to be an even number of files specified in the command line, see hicup_mapper --help for more details.\n";
+    }
+    push( @filenames, @ARGV );                                   #Add filenames specified in the command line to those in the configuration file
+}
+
+unless ( check_files_exist( \@filenames, 'EXISTS' ) ) {
+    die "Please adjust configuration.\n";
+}
+
+my %files = @filenames;                                          #%files : hash of paired forward and reverse files
+
+##########################################################
+#Check user-supplied parameters are ok
+unless ( check_parameters() ) {
+    die "Please change configuration file and/or command-line parameters and/or installation accordingly.\n";
+}
+
+#Check the hicup mapper outputfiles don't already exist
+my @hicup_Mapper_Outfiles = fileNamer( \@filenames, \%config, 'mapper', 1, 1, 1, 1, 1 );
+foreach my $file (@hicup_Mapper_Outfiles) {                      #Add filename extension
+    $file = $config{outdir} . $file;
+}
+
+unless ( check_files_exist( \@hicup_Mapper_Outfiles, 'NOT_EXISTS' ) ) {
+    die "HiCUP mapper will not run until files have been removed.\n";
+}
+
+
+#Determine number of threads the Bowtie2 aligner may use
+#Remember that each file is already processed using a separate core
+my $bowtie2_threads = floor( $config{threads} / scalar(@filenames) );
+$bowtie2_threads = 1 if ($bowtie2_threads < 1); 
+
+
+
+#Datestamp the summary file
+my ($summaryfile) = fileNamer( \@filenames, \%config, 'mapper', 0, 1, 0, 0, 0 );
+$summaryfile = $config{outdir} . $summaryfile;
+
+my $summaryfileTemp = ( fileNamer( \@filenames, \%config, 'mapper', 0, 0, 0, 1, 0 ) )[-1];    #Temp summary file will be the last item returned
+$summaryfileTemp = $config{outdir} . $summaryfileTemp;
+
+open( SUMMARYTEMP, ">$summaryfileTemp" ) or die "Could not write to '$summaryfileTemp' : $!";
+
+print "Mapping with HiCUP Mapper v$hicup_module::VERSION\n" unless $config{quiet};
+print "Using aligner '$config{aligner}'\n"                  unless $config{quiet};
+
+my $terminate = 0;                                                                            #Instruct script to die if error detected in child process
+my %children;                                                                                 #Hash of child processes
+
+foreach my $inputfile (@filenames) {
+
+    my $pid = fork();
+    die "cannot fork" unless defined $pid;
+
+    if ( $pid == 0 ) {
+        map_file($inputfile);
+        exit(0);
+    } else {
+        $children{$pid} = 1;
+        while ( keys(%children) == $config{threads} ) {
+            sleep(1);
+            reaper();
+        }
+    }
+}
+
+#Make sure all child processes have terminated before exiting
+do {
+    sleep(1);
+    reaper();
+} until ( keys(%children) == 0 );
+
+print "Mapping complete\n" unless $config{quiet};
+
+close SUMMARYTEMP or die "Could not close filehandle on '$summaryfileTemp' : $!";
+
+#Write the results from the mapping into a hash
+my %summary_results = extract_mapping_results("$summaryfileTemp");    #Stores the results to write to the summary file
+
+#Now pair the files
+print "Pairing files with HiCUP Mapper v$hicup_module::VERSION\n" unless $config{quiet};
+
+open( SUMMARY, ">$summaryfile" ) or die "Could not write to $summaryfile : $!";
+print SUMMARY "File\tTotal_reads_processed\tReads_too_short_to_map\t%Reads_too_short_to_map\tUnique_alignments\t%Unique_alignments\tMultiple_alignments\t%Multiple_alignments\tFailed_to_align\t%failed_to_align\tPaired\t%Paired\n";
+
+#Process the jobs as separate child processes (in accordance with $config{threads})
+%children = ();
+
+foreach my $fileforward ( keys %files ) {
+    my $filereverse = $files{$fileforward};
+
+    my $pid = fork();
+    die "cannot fork" unless defined $pid;
+
+    if ( $pid == 0 ) {
+        pair( $fileforward, $filereverse );
+        exit(0);
+    } else {
+        $children{$pid} = 1;
+        while ( keys(%children) == $config{threads} ) {
+            sleep(1);
+            reaper();
+        }
+    }
+}
+
+#Make sure all child processes have terminated before exiting
+do {
+    sleep(1);
+    reaper();
+} until ( keys(%children) == 0 );
+
+print "Pairing complete\n" unless $config{quiet};
+
+#Remove intermediate *.map* files
+my @map_files = fileNamer(\@filenames, \%config, 'mapper', 0, 0, 0, 1, 0);
+foreach my $mapFile (@map_files) {
+    unlink $config{outdir}.$mapFile or warn "Could not delete '$config{outdir}.$mapFile'\n";
+}
+
+close SUMMARY or die "Could not close filehandle on '$summaryfile' : $!";
+
+#Produce summary graph
+unless ( $config{r} eq '0' ) {    #R not installed/found
+    my $command = $config{r} . 'script ' . "$Bin/r_scripts/hicup_mapper_summary.r $config{outdir} $summaryfile";
+    !system("$command") or warn "Could not produce hicup_mapper summary bar chart: $command: $!";
+}
+
+exit(0);
+
+#######################################################################################
+#Subroutines                                                                          #
+#######################################################################################
+
+############################
+#Subroutine "check_parameters":
+#Check the user supplied parameters are ok
+#Uses global variables
+sub check_parameters {
+
+    my $parameters_ok = 1;
+
+    #Check aligners ok
+    $parameters_ok = 0 unless ( checkAligner( \%config ) );
+    $parameters_ok = 0 unless ( checkAlignerIndices( \%config ) );
+
+    if ( hasval( $config{format} ) ) {    #Check specified FASTQ format is valid
+        $parameters_ok = 0 unless ( determineAlignerFormat( $config{format} ) );
+    } else {                              #If FASTQ quality format not specified, determine this automatically
+        my @sequence_files = %files;
+        warn "FASTQ quality format not specified, analysing file '$sequence_files[0]' to predict file format used\n";
+        $config{format} = quality_checker( $sequence_files[0] );
+
+        if ( $config{format} eq 0 ) {
+            die "Unable to determine FASTQ quality format, please specify this and re-run HiCUP.\n";
+        } else {
+            warn "FASTQ quality set to $config{format}\n";
+        }
+    }
+
+    #Convert the FASTQ format into an aligner-specific format
+    $config{format} = determineAlignerFormat( $config{format}, $config{aligner} ) if ($parameters_ok);    #Only run if parameters ok to prevent duplicate warning messages
+
+    #Check the output directory exists and allows write access
+    if ( $config{outdir} ) {
+        unless ( -d $config{outdir} ) {
+            warn "Output directory '$config{outdir}' does not exist or is not writable\n";
+            $parameters_ok = 0;
+        }
+        unless ( $config{outdir} =~ /\/$/ ) {
+            $config{outdir} .= '/';                                                                       #Make sure that $config{outdir} ends with the forward slash character
+        }
+    } else {
+        $config{outdir} = './';                                                                           #Make current directory if none specified
+    }
+
+    $config{threads} = 1 unless ( hasval( $config{threads} ) );
+
+    #Check whether SAMtools is installed
+    unless ( hasval( $config{samtools} ) ) {
+        if ( !system "which samtools >/dev/null 2>&1" ) {
+            $config{samtools} = `which samtools`;
+            chomp $config{samtools};
+        }
+    }
+
+    checkR( \%config );    #Check R installed
+
+    return $parameters_ok;
+}
+
+#######################
+#Subroutine "map_file":
+#launches Bowtie to align FASTQ reads against a specified reference genome
+
+sub map_file {
+    my $inputfile = $_[0];
+    my ($outputfile) = fileNamer( $inputfile, \%config, 'mapper', 0, 0, 0, 1, 0 );    #The first temp file returned (These files are deleted after pairing, a mapper_summary temp file is also returned)
+    $outputfile = $config{outdir} . $outputfile;
+
+    my $line_counter = 1;
+
+    if ( $inputfile =~ /.*\.gz$/ ) {
+        open( INPUT, "zcat $inputfile |" ) or die $!;
+
+    } else {
+        open( INPUT, $inputfile ) or die $!;
+    }
+
+    local ( *READER, *WRITER, *ERROR );
+    my $oid;
+
+    if ( $config{bowtie} ne '' ) {
+        $oid = open3( \*WRITER, \*READER, \*ERROR, "$config{bowtie} -m 1 -n 1 --best --$config{format} -p 1 --chunkmbs 512 $config{index} --sam - $outputfile" );
+    } else {
+		#TODO
+		if ( $config{zip} and $config{samtools} ) {
+			$oid = open3( \*WRITER, \*READER, \*ERROR, "$config{bowtie2} --very-sensitive  -x $config{index} --no-unal --threads $bowtie2_threads --reorder - -S $outputfile" );
+		# "| samtools view -bSh 2>/dev/null - > $paired_filename" 
+		} elsif ( $config{zip} ) {
+			$oid = open3( \*WRITER, \*READER, \*ERROR, "$config{bowtie2} --very-sensitive  -x $config{index} --no-unal --threads $bowtie2_threads --reorder - -S $outputfile" );
+		# "| gzip -c - > $paired_filename"
+		} else {
+			$oid = open3( \*WRITER, \*READER, \*ERROR, "$config{bowtie2} --very-sensitive  -x $config{index} --no-unal --threads $bowtie2_threads --reorder - -S $outputfile" );
+		}
+	}
+
+    unless ($oid) {
+        die "Failed to launch aligner";
+    }
+
+    print "Mapping $inputfile\n" unless $config{quiet};
+
+    my $read_count       = 1;
+    my $too_short_to_map = 0;
+    my $unique_map       = 0;
+    my $unmapped         = 0;
+    my $multi_mapped     = 0;
+    my $reads_processed  = 0;
+	my $bowtie2_custom_multimap = 0;   #Number of reads 
+
+    my $select = IO::Select->new();
+    $select->add( \*ERROR );
+
+    while (<INPUT>) {
+        my $read = $_;
+        if (/^@\d+_[ATCG]+_/) {    #Checks if lines already numbered by the no longer supported script hicup_sorter?
+
+            my $line2 = scalar <INPUT>;
+            $read .= $line2;
+            my $read_length = length $line2;
+            $read .= scalar <INPUT>;
+            $read .= scalar <INPUT>;
+            if ( $read_length < 20 ) {    #Don't pass very short reads to Bowtie
+                $too_short_to_map++;
+                next;
+            }
+        } elsif (/^@/) {
+            $read =~ s/^@/\@$read_count\_/;
+            my $line2 = scalar <INPUT>;
+            $read .= $line2;
+            my $read_length = length $line2;
+            $read .= scalar <INPUT>;
+            $read .= scalar <INPUT>;
+            $read_count++;
+            if ( $read_length < 20 ) {    #Don't pass very short reads to Bowtie
+                $too_short_to_map++;
+                next;
+            }
+        }
+        print WRITER $read;
+
+        #Check for error messages from Bowtie
+        if ( $select->can_read(0.00000001) ) {
+            while ( $select->can_read(0.0001) ) {
+                $_ = <ERROR>;
+                warn "$inputfile Bowtie error: $_";
+            }
+        }
+
+    }
+
+    while ( $select->can_read(0.01) ) {
+        $_ = <ERROR>;
+        warn "$inputfile Bowtie error: $_";
+    }
+
+    close WRITER or die "Could not close 'WRITER' filehandle : $!";
+
+    while (<ERROR>) {
+
+        if ( $config{bowtie} ne '' ) {
+
+            # Don't show expected messages from bowtie but
+            # warn about anything else
+            unless ( /^\#/ or /^Reported/ or /^No alignments/ ) {
+                warn $_;
+            }
+
+            if (/\# reads processed: (\d+)/) {    #Bowtie output
+                $reads_processed = $1;
+            }
+            if (/\# reads with at least one reported alignment: (\d+)/) {    #Bowtie output
+                $unique_map = $1;
+            }
+
+            if (/\# reads that failed to align: (\d+)/) {                    #Bowtie output
+                $unmapped = $1;
+            }
+
+            if (/\# reads with alignments suppressed due to -m: (\d+)/) {    #Bowtie output
+                $multi_mapped = $1;
+            }
+        } else {
+
+            # Don't show expected messages from bowtie2, but
+            # warn about anything else
+            unless ( /\d* reads; of these:/ or /were unpaired; of these:/ or /aligned.+time/ or /overall alignment rate/ ) {
+                warn $_;
+            }
+
+            if (/(\d+) reads; of these:/) {    #Bowtie2 output
+                $reads_processed = $1;
+            }
+            if (/(\d+) \(.+\) aligned exactly 1 time/) {    #Bowtie2 output
+                $unique_map = $1;    #Will be overwritten later owing to new definition of multi-mapping
+            }
+
+            if (/(\d+) \(.+\) aligned 0 times/) {           #Bowtie2 output
+                $unmapped = $1;
+            }
+
+            if (/(\d+) \(.+\) aligned >1 times/) {          #Bowtie2 output
+                $multi_mapped = $1;    #Will be overwritten later owing to new definition of multi-mapping
+            }
+
+        }
+    }
+    close READER or die "Could not close 'READER' filehandle : $!";
+    close ERROR or die "Could not close 'ERROR' filehandle : $!";
+    waitpid( $oid, 0 );
+
+    #Add the results to the results summary hash
+	#Note, these values will be re-calculated if Bowtie2 is used as the aligner
+    my $percent_too_short_to_map;
+    my $percent_unique;
+    my $percent_unmapped;
+    my $percent_multi;
+
+    $reads_processed += $too_short_to_map;    #Reads processed is the number of reads processed by Bowtie + those too short to send to Bowtie
+
+    if ($reads_processed) {
+        $percent_too_short_to_map = sprintf( "%.1f", ( $too_short_to_map / $reads_processed * 100 ) );
+        $percent_unique           = sprintf( "%.1f", ( $unique_map / $reads_processed * 100 ) );
+        $percent_unmapped         = sprintf( "%.1f", ( $unmapped / $reads_processed * 100 ) );
+        $percent_multi            = sprintf( "%.1f", ( $multi_mapped / $reads_processed * 100 ) );
+    } else {
+        $percent_unique   = 'N/A';
+        $percent_unmapped = 'N/A';
+        $percent_multi    = 'N/A';
+    }
+    print SUMMARYTEMP "$inputfile\t$reads_processed\t$too_short_to_map\t$percent_too_short_to_map\t$unique_map\t$percent_unique\t$multi_mapped\t$percent_multi\t$unmapped\t$percent_unmapped\t\n";
+}
+
+
+#################################
+#Subroutine "bowtie2MultiMapRead"
+#Takes a read and uses the Bowtie2 flag
+#to report whether it is a multi-mapping read
+#Returns 1 if multi-mapping and 0 if uniquely mapping
+#Slightly adjusted from the main hicup subroutine
+sub bowtie2MultiMapRead {
+	
+    my @tags = split( /\t/, $_[0]);
+	my $mapq = $tags[4];
+	
+    @tags = splice( @tags, 11 );    #Only evaluate SAM tags
+
+	my $as;
+	my $xs;
+	
+    foreach my $tag (@tags) {
+        my ($tag_id, $score) = split(/:i:/, $tag);		
+		if($tag_id eq 'AS'){
+			$as = $score;
+		} elsif($tag_id eq 'XS') {
+			$xs = $score;
+		}
+	}
+	
+	if(defined $xs and defined $as){    #Potential multi-map, check quality scores to determine whether multi-maps		
+		if( ($mapq >= 30) and ( abs($xs - $as) >= 10 )  ){
+			return 0;    #Unique map
+		} else {
+			return 1;
+		}	
+	} elsif(defined $as){    #Unique map
+		return 0;
+	} else {
+		die "AS not defined in @tags\n";
+	}
+}	
+
+
+###################
+#Subroutine "pair":
+#pairs the .map files
+sub pair {
+
+    my $sequencefileF = $_[0];    #Keep original filename for writing results
+    my $sequencefileR = $_[1];    #Keep original filename for writing results
+
+    my ($fileForward) =
+      fileNamer( $sequencefileF, \%config, 'mapper', 0, 0, 0, 1, 0 );    #The first temp file returned (These files are deleted after pairing, a mapper_summary temp file is also returned)
+    $fileForward = $config{outdir} . $fileForward;
+
+    my ($fileReverse) =
+      fileNamer( $sequencefileR, \%config, 'mapper', 0, 0, 0, 1, 0 );    #The first temp file returned (These files are deleted after pairing, a mapper_summary temp file is also returned)
+    $fileReverse = $config{outdir} . $fileReverse;
+
+    my @forwardAndReverse = ( $sequencefileF, $sequencefileR );
+    my ($paired_filename) = fileNamer( \@forwardAndReverse, \%config, 'mapper', 1, 0, 0, 0, 0 );
+    $paired_filename = $config{outdir} . $paired_filename;
+
+    print 'Pairing ' . basename($fileForward) . ' and ' . basename($fileReverse) . "\n" unless $config{quiet};
+
+    if ( $config{zip} and $config{samtools} ) {
+        open( PAIRED, "| samtools view -bSh 2>/dev/null - > $paired_filename" ) or die "Couldn't write to file '$paired_filename' : $!";
+    } elsif ( $config{zip} ) {
+        open( PAIRED, "| gzip -c - > $paired_filename" ) or die "Couldn't write to file '$paired_filename' : $!";
+    } else {
+        open( PAIRED, ">$paired_filename" ) or die "Couldn't write to file '$paired_filename' : $!";
+    }
+
+    #Check whether the input file is zipped and then open accordingly
+    if ( $fileForward =~ /\.gz$/ ) {
+        open( FORWARD, "zcat $fileForward |" ) or die "Couldn't read file '$fileForward : $!";
+    } else {
+        open( FORWARD, $fileForward ) or die "Can't read \'$fileForward\' : $!";
+    }
+    if ( $fileForward =~ /\.gz$/ ) {
+        open( REVERSE, "zcat $fileReverse |" ) or die "Couldn't read file '$fileReverse' : $!";
+    } else {
+        open( REVERSE, $fileReverse ) or die "Can't read \'$fileReverse\' : $!";
+    }
+
+    my $f_read;
+    my $r_read;
+    my $f_read_id;
+    my $r_read_id            = 0;
+    my $paired_reads_counter = 0;
+    my $f_reads_counter      = 0;
+    my $r_reads_counter      = 0;
+	my $f_read_bowtie2_multimap = 0;    #Bowtie2 multi-mapping
+	my $r_read_bowtie2_multimap = 0;
+	
+
+    my $in_header = 1;    #Flag indicating if in the header region
+
+    while (<FORWARD>) {
+        $f_read = $_;
+        if (/^\s*$/) {
+            next;
+        } elsif (/^@/) {    #Print SAM header lines so conversion to BAM is possible
+            print PAIRED $_;
+            next;
+        } else {
+
+            if ($in_header) {    #Print the additional SAM header line
+                my $sam_header_line = "\@PG\tID:HiCUP Mapper\tVN:" . "$hicup_module::VERSION\n";
+                print PAIRED $sam_header_line;
+
+                if ( $config{ligation} ) {
+                    print PAIRED $config{ligation} . "\n";
+                }
+                $in_header = 0;
+            }
+            /^(\d+)_/;
+            $f_read_id = $1;
+
+			if($config{bowtie2} ne ''){
+				if ( bowtie2MultiMapRead($f_read) ){    #Don't included multi-mapping reads
+					$f_read_bowtie2_multimap++;
+					next;
+				}
+			}
+					
+			if($r_read_id == $f_read_id){   #Special case in which current Forward ID is same as previous reverse ID
+			
+ 		
+			if($config{bowtie2} ne ''){
+				if ( bowtie2MultiMapRead($r_read) ){     #Don't included multi-mapping reads
+					$r_read_bowtie2_multimap++;
+					next;
+				}
+			}
+								
+			$f_read =~ s/^(\d+)_//;                  #Remove numbering labels
+			$r_read =~ s/^(\d+)_//;
+            ( $f_read, $r_read ) = sam_formatter( $f_read, $r_read );
+			if ($f_read) {                           #Do not print empty values
+				print PAIRED $f_read;
+				print PAIRED $r_read;
+				$paired_reads_counter++;
+				next;
+				}			
+			}
+					
+            while ( $r_read_id < $f_read_id ) {
+                $r_read = scalar <REVERSE> or last;
+
+                if ( $r_read =~ /^\s*$/ ) {
+                    next;
+                } elsif ( $r_read =~ /^@/ ) {    #Ignore SAM format header lines
+                    next;
+                } else {
+                    $r_read =~ /^(\d+)_/;
+                    $r_read_id = $1;
+                }
+
+				if($config{bowtie2} ne ''){
+					if ( bowtie2MultiMapRead($r_read) ){     #Don't included multi-mapping reads
+						$r_read_bowtie2_multimap++;
+						next;
+					}
+				}
+
+                if ( $f_read_id == $r_read_id ) {
+                    $f_read =~ s/^(\d+)_//;                  #Remove numbering labels
+                    $r_read =~ s/^(\d+)_//;
+                    ( $f_read, $r_read ) = sam_formatter( $f_read, $r_read );
+                    if ($f_read) {                           #Do not print empty values
+                        print PAIRED $f_read;
+                        print PAIRED $r_read;
+                        $paired_reads_counter++;
+                    }
+                }
+            }
+        }
+    }
+
+	if($config{bowtie2}){    #When using bowtie2 we need to record the number of multi-mapping reads in the reverse read file   
+		while (<REVERSE>){
+			my $r_read = $_;
+			$r_read_bowtie2_multimap++ if( bowtie2MultiMapRead($r_read) );     #Don't included multi-mapping reads
+		}
+	}
+	
+    #Add the results to the summary_results hash
+    my @results_to_edit = ( $sequencefileF, $sequencefileR );
+	my $reverse_file_flag = 0;
+	
+    foreach my $key (@results_to_edit) {
+
+        unless ( exists $summary_results{$key} ) {
+            die "$key does not exits in summary results hash.\n";
+        }
+
+        my $result = $summary_results{$key};
+		
+		if($config{bowtie2} ne ''){    #Custom edit the multi_mapped reads
+			my ($reads_processed, $too_short_to_map, $percent_too_short_to_map, $unique_map, $percent_unique, $multi_mapped, $percent_multi, $unmapped, $percent_unmapped) = split(/\t/, $result);
+			
+			if($reverse_file_flag){
+				$multi_mapped = $r_read_bowtie2_multimap;
+			} else {
+				$multi_mapped = $f_read_bowtie2_multimap;
+			}
+			
+			$unique_map = $reads_processed - $too_short_to_map - $multi_mapped - $unmapped;
+					
+			if ($reads_processed) {
+				$percent_too_short_to_map = sprintf( "%.1f", ( $too_short_to_map / $reads_processed * 100 ) );
+				$percent_unique           = sprintf( "%.1f", ( $unique_map / $reads_processed * 100 ) );
+				$percent_unmapped         = sprintf( "%.1f", ( $unmapped / $reads_processed * 100 ) );
+				$percent_multi            = sprintf( "%.1f", ( $multi_mapped / $reads_processed * 100 ) );
+			} else {
+				$percent_unique   = 'N/A';
+				$percent_unmapped = 'N/A';
+				$percent_multi    = 'N/A';
+			}	
+			
+			$result = join("\t", $reads_processed, $too_short_to_map, $percent_too_short_to_map, $unique_map, $percent_unique, $multi_mapped, $percent_multi, $unmapped, $percent_unmapped);
+			$result .= "\t";
+		}
+			
+        my $percent_paired = sprintf( "%.1f", ( 100 * $paired_reads_counter ) / ( ( split( /\t/, $result ) )[0] ) );
+        $result .= "$paired_reads_counter\t$percent_paired";
+        $summary_results{$key} = $result;
+        my $filename_for_summary = ( split( /\//, $key ) )[-1];    #Remove folder paths
+        print SUMMARY "$filename_for_summary\t$summary_results{$key}\n";
+		
+		$reverse_file_flag++;
+    }
+
+    #Check that same number of reads were mapped in the forward file as the reverse file
+    my $F_reads_processed = ( ( split( /\t/, $summary_results{$sequencefileF} ) )[0] );
+    my $R_reads_processed = ( ( split( /\t/, $summary_results{$sequencefileR} ) )[0] );
+    unless ( $F_reads_processed == $R_reads_processed ) {
+        warn "Warning, risk of mis-pairing: forward and reverse FASTQ files do not contain the same number of reads: $sequencefileF ($F_reads_processed) vs $sequencefileR ($R_reads_processed)\n";
+
+    }
+	
+	close PAIRED or die "Output file '$paired_filename' did not close correctly, either an error or file contains no valid reads (check summary report) : $!";
+
+}
+
+
+############################
+#Subroutine "sam_formatter":
+#receives 2 single-end reads in SAM format and converts to
+#paired-end read SAM format
+sub sam_formatter {
+    my @f_read = split( /\t/, $_[0] );
+    my @r_read = split( /\t/, $_[1] );
+
+    #Relevant bitwise flags (flag in an 11-bit binary number)
+    #1 The read is one of a pair
+    #2 The alignment is one end of a proper paired-end alignment
+    #4 The read has no reported alignments
+    #8 The read is one of a pair and has no reported alignments
+    #16 The alignment is to the reverse reference strand
+    #32 The other mate in the paired-end alignment is aligned to the reverse reference strand
+    #64 The read is the first (#1) mate in a pair
+    #128 The read is the second (#2) mate in a pair
+
+    #The reads were mapped as single-end data, so should expect flags of
+    #0 (map to the '+' strand) or 16 (map to the '-' strand)
+    #Output example: a paired-end read that aligns to the reverse strand
+    #and is the first mate in the pair will have flag 83 (= 64 + 16 + 2 + 1)
+
+    my $f_bitwise = $f_read[1];
+    my $r_bitwise = $r_read[1];
+
+    #Ignore non-alignments (and reads rejected due to -m 1 in Bowtie)
+    if ( ( $f_bitwise & 0x4 ) or ( $r_bitwise & 0x4 ) ) {
+        return ( 0, 0 );
+    }
+
+    #The flag should now indicate this is paired-end data
+    $f_bitwise = $f_bitwise | 0x1;
+    $f_bitwise = $f_bitwise | 0x2;
+    $r_bitwise = $r_bitwise | 0x1;
+    $r_bitwise = $r_bitwise | 0x2;
+
+    #Indicate if the pair is on the reverse strand
+    if ( $f_bitwise & 0x10 ) {
+        $r_bitwise = $r_bitwise | 0x20;
+    }
+    if ( $r_bitwise & 0x10 ) {
+        $f_bitwise = $f_bitwise | 0x20;
+    }
+
+    #Is this first or the second pair?
+    $f_bitwise = $f_bitwise | 0x40;
+    $r_bitwise = $r_bitwise | 0x80;
+
+    #Insert the modified bitwise flags into the reads
+    $f_read[1] = $f_bitwise;
+    $r_read[1] = $r_bitwise;
+
+    #Determine the RNEXT and PNEXT values (i.e. the positional values of a read's pair)
+    #RNEXT
+    if ( $f_read[2] eq $r_read[2] ) {
+        $f_read[6] = '=';
+        $r_read[6] = '=';
+    } else {
+        $f_read[6] = $r_read[2];
+        $r_read[6] = $f_read[2];
+    }
+
+    #PNEXT
+    $f_read[7] = $r_read[3];
+    $r_read[7] = $f_read[3];
+
+    my $f_read_string = join( "\t", @f_read );
+    my $r_read_string = join( "\t", @r_read );
+
+    return ( $f_read_string, $r_read_string );
+}
+
+#####################
+#Subroutine "reaper":
+#reaps dead child processes
+sub reaper {
+
+    #Don't change $! and $? outside handler
+    local ( $!, $? );
+    my $pid = waitpid( -1, WNOHANG );
+    return if $pid == -1;
+    unless ( defined $children{$pid} ) {
+        return;
+    } else {
+        my $exit_value = $? >> 8;
+        if ($exit_value) {
+            $terminate = 1;
+        }
+        delete $children{$pid};
+    }
+}
+
+#####################################
+#Subroutine "extract_mapping_results":
+#Reads the summary temp file and places the results in a hash
+sub extract_mapping_results {
+    my $summary_file = $_[0];
+    my %results;
+
+    open( IN, $summary_file ) or die "Could not open $summary_file: $!";
+
+    while (<IN>) {
+        my $line = $_;
+        $line =~ /^(.+?)\t(.+)$/;
+        $results{$1} = $2;
+    }
+    close IN or die "Could not close filehandle on '$summary_file' : $!";
+
+    return %results;
+}
+
+__DATA__
+
+HiCUP homepage: www.bioinformatics.babraham.ac.uk/projects/hicup
+
+SYNOPSIS
+
+The hicup_mapper script aligns paired-end read files to a specified reference genome
+
+hicup_mapper [OPTIONS]... -config [CONFIGURATION FILE]...
+hicup_mapper [OPTIONS]... [FASTQ FILES]...
+
+FUNCTION
+
+Maps putative Hi-C di-tags against a reference genome. Forward and reverse reads
+are aligned independently and then paired i.e. two input files result in one 
+output file. The aligners Bowtie or Bowtie2 may be called to perform the mapping.
+
+Parameters may be passed to HiCUP Mapper using a configuration file and/or 
+via the command line (thereby overriding settings specified in the 
+configuration file). FASTQ file pairs should be placed next to each other when 
+using the command line, or on adjacent lines in the configuration file.
+
+
+COMMAND LINE OPTIONS
+
+--bowtie         Specify the path to Bowtie
+--bowtie2        Specify the path to Bowtie 2
+--config         Specify the configuration file
+--format         Specify FASTQ format
+                 Options: Sanger, Solexa_Illumina_1.0, Illumina_1.3, Illumina_1.5
+--help           Print help message and exit
+--index          Path to the relevant reference genome Bowtie/Bowtie2 indices
+--outdir         Directory to write output files
+--quiet          Suppress progress reports (except warnings)
+--threads        Specify the number of threads, allowing simultaneous processing 
+                 of different files (default: 1)
+--version        Print the program version and exit
+--zip            Compress output
+
+Full instructions on running the pipeline can be found at:
+www.bioinformatics.babraham.ac.uk/projects/hicup
+
+Steven Wingett, Babraham Institute, Cambridge, UK (steven.wingett@babraham.ac.uk)

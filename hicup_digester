@@ -1,0 +1,478 @@
+#!/usr/bin/perl
+
+use strict;
+use warnings;
+use Getopt::Long;
+use FindBin '$Bin';
+use lib $Bin;
+use hicup_module;
+use hicup_module qw(hashVal);
+
+use Data::Dumper;
+
+###################################################################################
+###################################################################################
+##This file is Copyright (C) 2018, Steven Wingett (steven.wingett@babraham.ac.uk)##
+##                                                                               ##
+##                                                                               ##
+##This file is part of HiCUP.                                                    ##
+##                                                                               ##
+##HiCUP is free software: you can redistribute it and/or modify                  ##
+##it under the terms of the GNU General Public License as published by           ##
+##the Free Software Foundation, either version 3 of the License, or              ##
+##(at your option) any later version.                                            ##
+##                                                                               ##
+##HiCUP is distributed in the hope that it will be useful,                       ##
+##but WITHOUT ANY WARRANTY; without even the implied warranty of                 ##
+##MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the                  ##
+##GNU General Public License for more details.                                   ##
+##                                                                               ##
+##You should have received a copy of the GNU General Public License              ##
+##along with HiCUP.  If not, see <http://www.gnu.org/licenses/>.                 ##
+###################################################################################
+###################################################################################
+
+#Get user-supplied parameters
+#Option variables
+my %config = (
+    config   => '',
+    example => '',
+    genome   => '',
+    help     => '',
+    outdir   => '',
+    quiet    => '',
+    re1      => '',
+    rex      => '',
+    re2      => '',
+    re1_name => '',
+    re2_name => '',
+    rex_name => '',
+    genome   => '',
+    version  => '',
+    zip      => ''
+);
+
+my $config_result = GetOptions(
+    "re1=s"    => \$config{re1},
+    "re2=s"    => \$config{re2},
+    "rex=s"    => \$config{rex},
+    "config=s" => \$config{config},
+    "example" => \$config{example},
+    "genome=s" => \$config{genome},
+    "help"     => \$config{help},
+    "outdir=s" => \$config{outdir},
+    "quiet"    => \$config{quiet},
+    "version"  => \$config{version},
+    "zip"      => \$config{zip},
+);
+
+die "Command line options need to be in the correct format (hicup_digester -help for more details.\n" unless ($config_result);
+
+$config{help} = 1 unless( hashVal(%config) );    #Print help and exit if no command line parameters
+
+if ( $config{help} ) {
+    print while (<DATA>);
+    exit;
+}
+
+#Print version and exit
+if ($config{version}) {
+    print "HiCUP Digester v$hicup_module::VERSION\n";
+    exit(0);
+}
+
+if ( $config{example} ) {
+    print_example_config_file('digester_example.conf');
+    exit(0);
+}
+
+unless ( $config{genome} ne '' ) {
+    $config{genome} = "unspecified_genome";
+}
+
+#Determine config parameters from configuration file
+my @filenames;
+if ( $config{config} ne '' ) {
+    @filenames = process_config( $config{config}, \%config );
+}
+
+if (@ARGV) {
+    push( @filenames, @ARGV );    #Add filenames specified in the command line to those in the configuration file
+}
+@filenames = deduplicate_array(@filenames);
+@filenames = sort @filenames;
+
+
+#########################################################################
+#Check files exist
+#Check the input files exist
+unless ( check_files_exist( \@filenames, 'EXISTS' ) ) {
+    die "Please find relevant file(s) or change configuration.\n";
+}
+
+##########################################################
+#Check user-supplied parameters are ok
+unless ( check_parameters() ) {
+    die "Please change configuration file and/or command-line parameters and/or installation accordingly\n";
+}
+
+print "HiCUP Digester (version $hicup_module::VERSION)\n";
+print "Digesting files\n" unless $config{quiet};
+
+# First restriction digestion.
+$config{re1} =~ /\^/g;
+my $re1_cut_remainder = length( $config{re1} ) - pos( $config{re1} );
+$config{re1} =~ s/\^//;
+
+# First restriction digestion - with additonal enzyme
+my $rex_cut_remainder;
+if ( $config{rex} ne 'None' ) {
+    $config{rex} =~ /\^/g;
+    $rex_cut_remainder = length( $config{rex} ) - pos( $config{rex} );
+    $config{rex} =~ s/\^//;
+}
+
+
+# Second restriction digestion
+my $re2_cut_remainder;
+if ( $config{re2} ne 'None' ) {
+    $config{re2} =~ /\^/g;
+    $re2_cut_remainder = length( $config{re2} ) - pos( $config{re2} );
+    $config{re2} =~ s/\^//;
+}
+
+#Lists the chromosome, restriction fragment number.
+my $outputfile = filenamecreator();
+if ( $config{zip} ) {
+    open(OUT, "| gzip -c - > $config{outdir}"."$outputfile.gz") or die "Could not write to '$config{outdir}.$outputfile.gz' : $!";
+} else {
+    open( OUT, '>', $config{outdir} . $outputfile ) or die "Could not write to '$config{outdir}.$outputfile' : $!";
+}
+
+if ( $config{rex} ne 'None' ) {
+    if ( $config{re2} ) {
+        print OUT "Genome:$config{genome}\tRestriction_Enzyme1:$config{re1_name} \[$config{re1_with_caret}\] $config{rex_name} \[$config{rex_with_caret}\]\tRestriction_Enzyme2:$config{re2_name} \t[$config{re2_with_caret}\]\tHicup Digester version $hicup_module::VERSION\n";    #Use by hicup_filter to determine whether double digest or sonication protocol
+        print OUT "Chromosome\tFragment_Start_Position\tFragment_End_Position\tFragment_Number\tRE1_Fragment_Number\t5'_Restriction_Site\t3'_Restriction_Site\n";
+    } else {
+        print OUT "Genome:$config{genome}\tRestriction_Enzyme1:$config{re1_name} \[$config{re1_with_caret}\] $config{rex_name} \[$config{rex_with_caret}\]\tRestriction_Enzyme2:$config{re2_name}\tHicup Digester version $hicup_module::VERSION\n";                                 #Use by hicup_filter to determine whether double digest or sonication protocol
+        print OUT "Chromosome\tFragment_Start_Position\tFragment_End_Position\tFragment_Number\tRE1_Fragment_Number\t5'_Restriction_Site\t3'_Restriction_Site\n";
+    }
+} else {
+
+    if ( $config{re2} ne 'None' ) {
+        print OUT "Genome:$config{genome}\tRestriction_Enzyme1:$config{re1_name} \[$config{re1_with_caret}\]\tRestriction_Enzyme2:$config{re2_name} \[$config{re2_with_caret}\]\tHicup digester version $hicup_module::VERSION\n";                                                   #Use by hicup_filter to determine whether double digest or sonication protocol
+        print OUT "Chromosome\tFragment_Start_Position\tFragment_End_Position\tFragment_Number\tRE1_Fragment_Number\t5'_Restriction_Site\t3'_Restriction_Site\n";
+    } else {
+        print OUT "Genome:$config{genome}\tRestriction_Enzyme1:$config{re1_name} \[$config{re1_with_caret}\]\tRestriction_Enzyme2:$config{re2_name}\tHicup digester version $hicup_module::VERSION\n";                                                                               #Use by hicup_filter to determine whether double digest or sonication protocol
+        print OUT "Chromosome\tFragment_Start_Position\tFragment_End_Position\tFragment_Number\tRE1_Fragment_Number\t5'_Restriction_Site\t3'_Restriction_Site\n";
+    }
+}
+
+#Go through each file  and find the restriction sites.
+my %chromosomes_processed;                                                                                                                                                                                                                                             #Keep track of chromosomes processed to prevent the same chromosomes being processed more than once
+my $sequence;
+my $chromosome;
+
+foreach my $filename (@filenames) {
+
+    if ( $filename =~ /.*\.gz$/ ) {
+        open( IN, "zcat $filename |" ) or die "Cannot open filename: $!";
+    } else {
+        open( IN, $filename ) or die "Can't read filename: $!";
+    }
+	
+    print "Digesting '$filename'\n" unless $config{quiet};
+
+    $sequence = '';
+    my $chromosomes_in_file = 0;
+    my $line_count = 0;
+
+    while (<IN>) {
+        my $line = $_;
+        chomp($line);
+
+        $line_count++;
+
+        if($line_count == 1){    #Check first line is a FASTA header line
+       		unless($line =~ /^\>(\S+).*$/){
+        		die "File '$filename' is not in FASTA format at line:\n$line\nFirst line of a FASTA file should give the chromosome name\nFor more details on FASTA format go to:\nhttp://en.wikipedia.org/wiki/FASTA_format\n";
+        	}
+        }
+
+        if ( $line =~ /^\>/ ) {    #Process FASTA header to determine chromosome
+        	unless($line =~ /^\>(\S+).*$/){
+        		die "File '$filename' is not in FASTA format at line:\n$line\nA chromosome name is reqired immediately after '>' (blank spaces are not allowed)\nFor more details on FASTA format go to:\nhttp://en.wikipedia.org/wiki/FASTA_format\n";
+        	}
+
+            if ( $chromosomes_in_file > 0 ) {    #More than 1 c'some in file - process previous c'some now
+                digest();
+                $sequence = '';
+            }
+
+            #Current c'some identity
+            $chromosome = $1;
+            $chromosomes_in_file++;
+            if ( exists $chromosomes_processed{$chromosome} ) {
+                die "The sequence file(s) to be digested contain multiple instances of chromosome $chromosome. Digestion terminated.\n";
+            } else {
+                $chromosomes_processed{$chromosome} = '';
+            }
+
+        } else {
+            $sequence .= $line;
+        }
+    }
+
+    close IN;
+
+    digest();    #Digest the last (or only) sequence in the file
+
+}
+
+close OUT or die "Could not close filehandle on '$config{outdir} . $outputfile' : $!";
+
+warn "Digestion complete\n" unless $config{quiet};
+
+exit (0);
+
+#######################################################################################
+#Subroutines                                                                          #
+#######################################################################################
+
+############################
+#Subroutine "check_parameters":
+#Check the user supplied parameters are ok
+#Uses global variables
+sub check_parameters {
+
+    my $parameters_ok = 1;
+
+    #Check the output directory exists and allows write access
+    if ( $config{outdir} ) {
+        unless ( -d -w $config{outdir} ) {
+            warn "Output directory '$config{outdir}' does not exist or is not writable.\n";
+            $parameters_ok = 0;
+        }
+
+        #Make sure that $outdir ends with the forward slash character
+        unless ( $config{outdir} =~ /\/$/ ) {
+            $config{outdir} .= '/';
+        }
+    } else {
+        $config{outdir} = './';
+    }
+
+    #Check restriction enzymes in correct format
+    if ( $config{re1} eq '' ) {    #RE1 present
+        warn "Please specify restriction enzyme 1 (--re1)\n";
+        $parameters_ok = 0;
+    }
+
+    #Split re1 into re1 and rex if two Hi-C (not re2) restriction enzymes specified
+    if($config{re1} =~ /:/){
+        ($config{re1}, $config{rex}) = split( /:/, $config{re1} );
+    }
+
+
+
+    foreach my $re ( 're1', 're2', 'rex' ) {    #Check whether the RE names been included
+        my $hash_id_re_name = $re . '_name';
+        if ( $config{$re} ne '' ) {
+            if ( $config{$re} =~ /,/ ) {
+                my ( $seq, $name ) = split( /,/, $config{$re} );
+                $seq = uc $seq;    #Standardise by converting to upper case
+                $config{$re}              = $seq;
+                $config{$hash_id_re_name} = $name;
+            } else {
+                $config{$hash_id_re_name} = $re . '_unspecified';
+            }
+        } else {
+            $config{$re}              = 'None';
+            $config{$hash_id_re_name} = 'None';    #No name specified by user
+        }
+    }
+
+    foreach my $re ( 're1', 're2', 'rex' ) {       #Check RE are in correct format
+        if ( $config{$re} ne 'None' ) {
+            unless ( $config{$re} =~ /^[ACGT\^]+$/ ) {
+                warn "Restriction enzyme: '$config{$re}' should only contain the characters: 'A','G','C','T' or '^'\n";
+                $parameters_ok = 0;
+            }
+
+            unless ( ( $config{$re} =~ tr/\^// ) == 1 ) {
+                warn "Restriction enzyme: '$config{$re}' should contain one caret character ('^')\n";
+                $parameters_ok = 0;
+            }
+
+            my $hash_id_re_name = $re . '_name';
+            unless ( $config{$hash_id_re_name} =~ /^\w*$/ ) {
+                warn "The restriction enzyme name '$config{$hash_id_re_name}' should only contain alphanumeric characters\n";
+				$parameters_ok = 0;
+            }
+        }
+    }
+
+    foreach my $re ( 're1', 're2', 'rex' ) {    #Create a config term storing the sequence with the caret (the caret will be removed from the original)
+        if ( $re ne 'None' ) {
+            my $hash_id_re_name = $re . '_with_caret';
+            $config{$hash_id_re_name} = $config{$re};
+        }
+    }
+
+    if(hasval ($config{genome}) ){
+        unless($config{genome} =~ /^\w*$/){
+            warn "Option --genome may only be passed alphanumeric characters and underscore, please adjust\n";
+            $parameters_ok = 0;
+        }
+    }
+
+    return $parameters_ok;
+}
+
+####################
+#Subroutine 'digest':
+#processes the $sequence variable, identifying cut sites
+sub digest {
+    my %digest_positions = ();
+
+    #The positions in the hash are the last base of a restriction fragment.
+    while ( $sequence =~ /$config{re1}/ig ) {
+        my $lastbase = ( pos($sequence) ) - $re1_cut_remainder;
+        $digest_positions{$lastbase} = "Re1" unless($lastbase == 0);   #unless conditional prevents initialisation errors
+    }
+
+    if ( $config{rex} ne 'None' ) {
+        while ( $sequence =~ /$config{rex}/ig ) {
+            my $lastbase = ( pos($sequence) ) - $rex_cut_remainder;
+            $digest_positions{$lastbase} = "Re1" unless($lastbase == 0);;
+        }
+    }
+
+    if ( $config{re2} ) {
+        while ( $sequence =~ /$config{re2}/ig ) {
+            my $lastbase = ( pos($sequence) ) - $re2_cut_remainder;
+            $digest_positions{$lastbase} = "Re2" unless($lastbase == 0);
+        }
+    }
+
+    #Create an array of the positions, for sorting purposes
+    my @ordered_positions = keys %digest_positions;
+    @ordered_positions = sort { $a <=> $b } @ordered_positions;
+
+    #Print to file the restriction digestion results:
+    #Chromosome, Start position, End Position, Fragment Number, Rest.Enzyme1 Fragment Number, 5'-Cut Site, 3'-Cutsite.
+    my $first_base     = 1;
+    my $five_prime_enz = "None";
+    my $three_prime_enz;
+    my $fragment_number     = 1;
+    my $re1_fragment_number = 1;
+
+    if ( scalar @ordered_positions ) {    #Check the rest. enz. cuts the c'some
+                                          #A restriction site begining (e.g. DpnII - ^GATC ) or ending with a cut creates incorrect entries in the @ordered_positions
+                                          #array at either the start [0] or end [-1] respectively. Those errors are removed here.
+        if ( $ordered_positions[0] == 0 ) {
+            shift @ordered_positions;
+        }
+        if ( $ordered_positions[-1] == length($sequence) ) {
+            pop @ordered_positions;
+        }
+
+        foreach my $last_base (@ordered_positions) {
+            $three_prime_enz = $digest_positions{$last_base};
+            print OUT "$chromosome\t$first_base\t$last_base\t$fragment_number\t$re1_fragment_number\t$five_prime_enz\t$three_prime_enz\n";
+            $five_prime_enz = $three_prime_enz;
+            $fragment_number++;
+            if ( $three_prime_enz eq "Re1" ) {
+                $re1_fragment_number++;
+            }
+            $first_base = $last_base + 1;
+
+            #Add the last fragment
+            if ( scalar(@ordered_positions) < $fragment_number ) {
+                $three_prime_enz = 'None';
+                $last_base       = length($sequence);
+                print OUT "$chromosome\t$first_base\t$last_base\t$fragment_number\t$re1_fragment_number\t$five_prime_enz\t$three_prime_enz\n";
+            }
+        }
+    } else {    #If not, the fragment will be the whole c'some
+        my $last_base = length $sequence;
+        print OUT "$chromosome\t1\t$last_base\t1\t1\tNone\tNone\n";
+    }
+}
+
+##############################
+#Subroutine "filenamecreator":
+#names the outputfile
+sub filenamecreator {
+
+    #Create a datestamped filenames for the output
+    my @now = localtime();
+    $config{timestamp} = sprintf(
+        "%02d-%02d-%02d_%02d-%02d-%04d",
+
+        $now[2], $now[1],     $now[0],
+        $now[3], $now[4] + 1, $now[5] + 1900
+    );
+
+    my $filename;
+    if ( $config{rex} ne 'None' ) {    #$rex declared outside of subroutine
+        $filename = "Digest_" . $config{genome} . "_" . $config{re1_name} . "_" . $config{rex_name} . "_" . $config{re2_name} . "_" . $config{timestamp} . ".txt";
+    } else {
+        $filename = "Digest_" . $config{genome} . "_" . $config{re1_name} . "_" . $config{re2_name} . "_" . $config{timestamp} . ".txt";
+    }
+
+    #Print to the summary file
+    if ( -e "$filename" ) {
+        die "File \'$filename\' already exists. Please delete or rename file.\n\n";
+    }
+    return $filename;
+}
+
+
+
+
+__DATA__
+
+HiCUP homepage: www.bioinformatics.babraham.ac.uk/projects/hicup
+
+The 'hicup_digester' script creates a reference genome, cut with a
+specified restriction enzyme
+
+SYNOPSIS
+
+hicup_digester [OPTIONS]... -config [CONFIGURATION FILE]
+hicup_digester [OPTIONS]... [FASTA FILES]...
+
+FUNCTION
+
+The HiCUP pipeline removes Hi-C artefacts, requiring a reference digested 
+genome. HiCUP Digester identifies the cut sites in FASTA files. The script 
+prints the results to file for subsequent processing by HiCUP Filter.
+
+The names of the files to be processed and the digestion parameters may be 
+passed to the script by a configuration file or command line arguments. 
+
+COMMAND LINE OPTIONS
+
+--re1           Restriction enzyme used to digest the genome (the enzyme that forms the
+                ligation junction) e.g. A^GATCT,BglII. 
+                Some Hi-C protocols may use two enzymes at this stage.
+                To specify two enzymes: -1 A^GATCT,BglII:A^AGCTT,HindIII.
+--re2           To specify a restriction enzyme instead of sonication to shorten
+                di-tags. This restriction site does NOT form a Hi-C ligation 
+                junction. 2 e.g. AG^CT,AluI. Typically the sonication
+                protocol is followed.
+--config        Specify the name of the optional configuration file
+--genome        Name of the genome to be digested (not the path to the genome file
+                or files, but the genome name to include in the output file) 
+--help          Print program help and exit
+--outdir        Specify the directory to which the output files should be 
+                written
+--quiet         Suppress all progress reports
+--version       Print the program version and exit
+--zip           Print the results to a gzip file
+
+Full instructions on running the pipeline can be found at:
+www.bioinformatics.babraham.ac.uk/projects/hicup
+
+Steven Wingett, Babraham Institute, Cambridge, UK (steven.wingett@babraham.ac.uk)

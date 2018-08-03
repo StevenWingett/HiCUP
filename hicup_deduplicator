@@ -1,0 +1,557 @@
+#!/usr/bin/perl
+
+use strict;
+use warnings;
+use POSIX;
+use Getopt::Long;
+use Carp;
+use FindBin '$Bin';
+use lib $Bin;
+use hicup_module;
+use hicup_module qw(hashVal newopen fileNamer);
+
+use Data::Dumper;
+
+###################################################################################
+###################################################################################
+##This file is Copyright (C) 2018, Steven Wingett (steven.wingett@babraham.ac.uk)##
+##                                                                               ##
+##                                                                               ##
+##This file is part of HiCUP.                                                    ##
+##                                                                               ##
+##HiCUP is free software: you can redistribute it and/or modify                  ##
+##it under the terms of the GNU General Public License as published by           ##
+##the Free Software Foundation, either version 3 of the License, or              ##
+##(at your option) any later version.                                            ##
+##                                                                               ##
+##HiCUP is distributed in the hope that it will be useful,                       ##
+##but WITHOUT ANY WARRANTY; without even the implied warranty of                 ##
+##MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the                  ##
+##GNU General Public License for more details.                                   ##
+##                                                                               ##
+##You should have received a copy of the GNU General Public License              ##
+##along with HiCUP.  If not, see <http://www.gnu.org/licenses/>.                 ##
+###################################################################################
+###################################################################################
+
+#Option variables
+my %config = (
+    batch_size      => '',
+    datestamp       => '',
+    example         => '',
+    config          => '',
+    help            => '',
+    outdir          => '',
+    pipeline_outdir => '',
+    quiet           => '',
+    threads         => '',
+    r               => '',
+    samtools        => '',
+    threads         => '',
+    version         => '',
+    zip             => ''
+);
+
+my $config_result = GetOptions(
+    "batch=i"           => \$config{batch_size},
+    "config=s"          => \$config{config},
+    "datestamp=s"       => \$config{datestamp},          #Hidden option passed from the HiCUP master script
+    "example"           => \$config{example},
+    "help"              => \$config{help},
+    "outdir=s"          => \$config{outdir},
+    "pipeline_outdir=s" => \$config{pipeline_outdir},    #Hidden option passed from the HiCUP master script
+    "quiet"             => \$config{quiet},
+    "version"           => \$config{version},
+    "r=s"               => \$config{r},
+    "samtools"          => \$config{samtools},
+    "threads=i"         => \$config{threads},
+    "zip"               => \$config{zip},
+);
+
+die "Could not parse options.\n" unless ($config_result);
+
+if ( $config{help} ) {
+    print while (<DATA>);
+    exit(0);
+}
+
+#Print version and exit
+if ( $config{version} ) {
+    print "HiCUP Deduplicator v$hicup_module::VERSION\n";
+    exit(0);
+}
+
+if ( $config{example} ) {
+    print_example_config_file('deduplicator_example.conf');
+    exit(0);
+}
+
+################################################
+#Check dependencies and user-supplied parameters
+die "Please change configuration file and/or command-line parameters and/or installation accordingly\n" unless ( check_parameters() );
+
+#Get input filenames
+my @files;    #Files to be processed
+@files = process_config( $config{config}, \%config ) if ( hasval( $config{config} ) );    #Modifies %config and returns an array of the filenames
+push( @files, @ARGV ) if @ARGV;
+@files = sort deduplicate_array (@files);
+die "Please specify files to be de-duplicated.\n" unless (@files);
+my $summary_filename = summary_file_creator();
+
+#Check input files exist and output files don't.
+die "Please correctly specify files to be filtered.\n" unless ( check_files_exist( \@files, 'EXISTS' ) );
+my @hicup_deduplicator_outfiles = fileNamer( \@files, \%config, 'deduplicator', 1, 1, 1, 1, 1 );
+foreach my $outfile (@hicup_deduplicator_outfiles) {
+    $outfile = $config{outdir} . $outfile;
+}
+
+unless ( check_files_exist( \@hicup_deduplicator_outfiles, 'NOT_EXISTS' ) ) {
+    die "HiCUP Deduplicator will not run until files have been removed.\n";
+}
+
+#Begin de-duplication
+print "Removing duplicates with HiCUP Deduplicator v$hicup_module::VERSION\n" unless ( $config{quiet} );
+
+open( SUMMARY, '>', $config{outdir} . $summary_filename ) or die "Could not write to summary file '$config{outdir} . $summary_filename'.\n";
+print SUMMARY "File\tRead_pairs_processed\tUnique_di-tags\tCis_<10kbp_of_uniques\tCis_>10kbp_of_uniques\tTrans_of_uniques\n";    #Write header line to file
+
+my $terminate = 0;                                                                                                               #Instruct script to die if error detected in child process
+my %children;                                                                                                                    #Hash of child processes
+foreach my $file (@files) {
+    my $pid = fork();
+    die "cannot fork" unless defined $pid;
+
+    if ( $pid == 0 ) {
+        process_file($file);
+        exit(0);
+    } else {
+        $children{$pid} = 1;
+        while ( keys(%children) == $config{threads} ) {
+            sleep(1);
+            reaper();
+        }
+    }
+}
+
+#Make sure all child processes have terminated before exiting
+do {
+    sleep(1);
+    reaper();
+} until ( keys(%children) == 0 );
+
+close SUMMARY or die "Close filehandle on '$config{outdir} . $summary_filename' : $!";
+
+#Produce summary graphs
+unless ( $config{r} eq '0' ) {    #R not installed/found
+    my $cis_trans_suffix = ( fileNamer( '', \%config, 'deduplicator', 0, 0, 1, 0, 0 ) )[0];
+    my $command_cis_trans = $config{r} . 'script ' . "$Bin/r_scripts/hicup_deduplicator.cis_trans_summary.r $config{outdir} " . $config{outdir} . $summary_filename . " $cis_trans_suffix";
+    !system($command_cis_trans) or warn "Could not produce hicup_deduplicator summary cis/trans pie chart: $command_cis_trans: $!";
+
+    my $uniques_suffix = ( fileNamer( '', \%config, 'deduplicator', 0, 0, 1, 0, 0 ) )[1];
+    my $uniques_command = $config{r} . 'script ' . "$Bin/r_scripts/hicup_deduplicator.uniques_summary.r $config{outdir} " . $config{outdir} . $summary_filename . " $uniques_suffix";
+    !system($uniques_command) or warn "Could not produce hicup_deduplicator summary uniques bar chart chart: $uniques_command: $!";
+}
+
+print "De-duplication complete\n" unless ( $config{quiet} );
+
+exit(0);
+
+######################################################################################
+#Subroutines
+######################################################################################
+
+###########################
+#Subroutine "process_file":
+#De-duplicates data file
+sub process_file {
+
+    my $file         = $_[0];
+    my $tags_present = 1;       #Flag for whether using SAM tags to score cis/trans ratio
+
+    chomp $file;
+    print "De-duplicating $file\n" unless ( $config{quiet} );
+
+    #my $tempdir = $file . "_tempory_batch_folder";
+    #$tempdir =~ s/^.+\///;    #Remove folder references
+
+    my ($tempdir) = fileNamer( $file, \%config, 'deduplicator', 0, 0, 0, 1, 0 );
+    $tempdir = $config{outdir} . $tempdir;
+    unless ( -d $tempdir ) {
+        mkdir $tempdir or die "Could not create $tempdir\n";
+    } else {
+        die "Terminating: temporary output directory $tempdir alreads exists, please remove folder.\n";
+    }
+
+    if ( $file =~ /\.gz$/ ) {
+        open( IN, "zcat $file |" ) or die "Couldn't read $file : $!";
+    } elsif ( $file =~ /\.bam$/ ) {
+        if ( $config{samtools} ) {
+            open( IN, "$config{samtools} view -h $file |" ) or die "Couldn't read $file: $!";
+        } else {
+            warn "Skipping $file: cannot process BAM files - either install SAMtools or only provide SAM files\n";
+            next;
+        }
+    } else {
+        open( IN, $file ) or die "Could not read $file: $!";
+    }
+
+    my $write_command;
+    my $outputfilename = fileNamer( $file, \%config, 'deduplicator' );
+
+    if ( $config{zip} and $config{samtools} ) {
+        $write_command = "| $config{samtools} view -bSh 2>/dev/null - >";
+    } elsif ( $config{zip} ) {
+        $write_command = '| gzip -c - >';
+    } else {
+        $write_command = '>';
+    }
+
+    open( UNIQUES, $write_command . $config{outdir} . $outputfilename ) or die "Could not write to $config{outdir}.$outputfilename\n";    #Unique di-tags written to here
+
+    my %filehandler;                                                                                                                      #Associates temp outputfiles with their file handles
+    my %category_counter =
+      ( 'Cis' => 0, 'Trans' => 0, 'Uniques' => 0, 'Invalid_SAM_format' => 0, 'Valid_SAM_format' => 0, 'Pairs_processed' => 0, 'Tag_cis_close' => 0, 'Tag_cis_far' => 0, 'Tag_trans' => 0 );
+
+    my $in_header = 1;                                                                                                                    #Flag indicating if in the header region
+
+    while (<IN>) {
+        if (/^@/) {                                                                                                                       #Add headers line to final output file
+            print UNIQUES;
+            next;
+        } else {
+            if ($in_header) {
+                my $sam_header_line = "\@PG\tHiCUP Deduplicator\tVN:" . "$hicup_module::VERSION\n";
+                print UNIQUES $sam_header_line;
+                $in_header = 0;
+            }
+        }
+
+        my $readF = $_;
+        my $readR = scalar <IN>;
+
+        $category_counter{Pairs_processed}++;
+
+        unless ( $readF =~ /^.+\t\d+\t\S+\t\d+\t\d+\t\S+\t.+\t\d+\t\d+\t[ATCGN]+\t.+$/ and $readR =~ /^.+\t\d+\t\S+\t\d+\t\d+\t\S+\t.+\t\d+\t\d+\t[ATCGN]+\t.+$/ ) {
+            $category_counter{Invalid_format}++;
+            next;
+        } else {
+            $category_counter{Valid_SAM_format}++;
+        }
+
+        my $ditag_label = ditag_labeller( $readF, $readR );
+
+        #The data need to be batched into temporary files to make possible the
+        #de-duplication, else the memory demands will be prohibative
+        #Identify the temporary file to which the read pairs should be written
+        my ( $chromosome_in_filename, $position_in_filename ) = split( /\t/, $ditag_label );
+        $position_in_filename = ceil( $position_in_filename / $config{batch_size} );    #Identify the correct batch
+        my $filename_no_folder_refs = $file;
+        $filename_no_folder_refs =~ s/^.+\///;                                          #Remove folder references
+
+        my $temp_filename = $tempdir . '/' . $filename_no_folder_refs . "_" . $chromosome_in_filename . "_" . $position_in_filename . ".temp";
+        my $fh;                                                                         #Filehandle to use
+
+        if ( exists $filehandler{$temp_filename} ) {
+            #Print to an existing file
+            $fh = $filehandler{$temp_filename};
+            print $fh $readF, $readR or die "Could not write to $temp_filename: $!";
+        } else {
+        	if(scalar keys %filehandler >= 100){   #Large number of filehandles already open!
+        		#Very, very rarely a file may require a huge number of filehandles 
+        		#(e.g. if mapping against a genome with thousands of scaffold files)
+        	    #Owing to Linux limits on the number of filehandles that may be opened
+        	    #simultaneously, HiCUP may not process such file. To make it less likely
+        	    #HiCUP will crash, this script will now open only 100 filehandles and additional
+        	    #data will be sent to an extra filehandle called EXTRA. This is not a perfect fix,
+        	    #rather a patch for one sample requiring HiCUP processing.
+        	    $temp_filename = $tempdir . '/' . $filename_no_folder_refs . "_" . 'EXTRA' . ".temp";
+        	   	$filehandler{$temp_filename} = newopen($temp_filename) unless exists $filehandler{$temp_filename};
+        	   	$fh = $filehandler{$temp_filename};
+
+        	}else{    #Print to a new file
+            	$filehandler{$temp_filename} = newopen($temp_filename);
+            	$fh = $filehandler{$temp_filename};
+        	}
+        	print $fh $readF, $readR or die "Could not write to $temp_filename: $!";
+        }
+    }
+
+    #Process each temp batch file in turn, writing unique di-tags to the final ouput file
+    foreach my $temp_filename ( keys %filehandler ) {
+        my $fh = $filehandler{$temp_filename};
+        my %ditag_inventory;    #Record of all the di-tag labels found in the batch file
+
+        close $fh or die "Could not close filehandle on $fh : $!";              #Close the 'write-to' filehandle
+        open( BATCH_IN, $temp_filename ) or die "Could not open $temp_filename: $!";    #Open a read-only filehandle
+
+        while (<BATCH_IN>) {
+            my $readF       = $_;
+            my $readR       = scalar <BATCH_IN>;
+            my $ditag_label = ditag_labeller( $readF, $readR );
+
+            if ( exists $ditag_inventory{$ditag_label} ) {
+                next;                                                                   #Ignore the duplicated di-tag
+            } else {
+                print UNIQUES $readF, $readR;                                           #Print first (and possibly only) occurance of di-tag to outputfile
+                $ditag_inventory{$ditag_label} = '';
+                $category_counter{Uniques}++;
+
+                #Score cis/trans ratio using chromosome name
+                if ( ( split( /\t/, $readF ) )[6] eq '=' ) {
+                    $category_counter{Cis}++;
+                } else {
+                    $category_counter{Trans}++;
+                }
+
+                #Check with cis/trans tags are present on all reads so far and if so, score read
+                if ($tags_present) {
+                    unless ( ( split( /\t/, $readF ) )[-1] =~ /CT:Z:.+/ ) {
+                        $tags_present = 0;
+                    }
+                    unless ( ( split( /\t/, $readR ) )[-1] =~ /CT:Z:.+/ ) {
+                        $tags_present = 0;
+                    }
+                }
+
+                if ($tags_present) {
+                    my $tag = ( split( /\t/, $readF ) )[-1];
+                    chomp $tag;
+                    if ( $tag eq 'CT:Z:CLOSE' ) {
+                        $category_counter{Tag_cis_close}++;
+                    } elsif ( $tag eq 'CT:Z:FAR' ) {
+                        $category_counter{Tag_cis_far}++;
+                    } elsif ( $tag eq 'CT:Z:TRANS' ) {
+                        $category_counter{Tag_trans}++;
+                    } else {
+                        $tags_present = 0;
+                    }
+                }
+            }
+        }
+        close BATCH_IN or die "Could not close BATCH_IN : $!";
+        unlink $temp_filename or die "Could not delete $temp_filename: $!";    #Delete the temporary file
+    }
+    close UNIQUES;
+    rmdir $tempdir;    #Delete temporary file folder
+
+    #print "$category_counter{Tag_trans}++";
+
+    if ( $category_counter{'Invalid_format'} ) {
+        warn "$file: $category_counter{'Invalid_format'} read_pair(s) had an invalid format\n";
+    }
+
+    if ( $category_counter{Uniques} ) {
+        my $percent_unique       = 100 * $category_counter{Uniques} / $category_counter{Valid_SAM_format};
+        my $percent_unique_trans = 100 * $category_counter{Trans} / $category_counter{Uniques};
+        my ( $percent_unique_cis, $percent_unique_cis_close, $percent_unique_cis_far );
+        my $pie_chart_trans = sprintf( "%.1f", $percent_unique_trans );
+
+        my $filename_for_summary = ( split( /\//, $file ) )[-1];
+
+        print SUMMARY
+          "$filename_for_summary\t$category_counter{Valid_SAM_format}\t$category_counter{Uniques}\t$category_counter{Tag_cis_close}\t$category_counter{Tag_cis_far}\t$category_counter{Trans}\n"
+          ;    #Write this to outputfile if tags present or not
+
+        if ($tags_present) {    #Print results depending on on whether tags were present
+            $percent_unique_cis_close = 100 * $category_counter{Tag_cis_close} / $category_counter{Uniques};
+            $percent_unique_cis_far   = 100 * $category_counter{Tag_cis_far} / $category_counter{Uniques};
+            $percent_unique_cis       = $percent_unique_cis_close + $percent_unique_cis_far;
+        } else {
+            $percent_unique_cis = 100 * $category_counter{Cis} / $category_counter{Uniques};
+        }
+
+    } else {
+        warn "$file contained no valid di-tags\n";
+    }
+}
+
+############################
+#Subroutine "check_parameters":
+#Check the user supplied parameters are ok
+#Uses global variables
+sub check_parameters {
+
+    my $parameters_ok = 1;
+
+    #Check whether SAMtools is installed
+    unless ( hasval( $config{samtools} ) ) {
+        if ( !system "which samtools >/dev/null 2>&1" ) {
+            $config{samtools} = `which samtools`;
+            chomp $config{samtools};
+        }
+    }
+
+    if ( hasval( $config{threads} ) ) {
+        if ( $config{threads} < 1 ) {    #Ensure threads not set to less than 1!
+            warn "Threads changed from config{threads} to 1\n";
+            $config{threads} = 1;
+        }
+    } else {
+        $config{threads} = 1;
+    }
+
+    $config{outdir} = './' unless ( hasval( $config{outdir} ) );    #Set to CWD if not defined
+
+    #Check the output directory exists and allows write access
+    unless ( -d $config{outdir} ) {
+        warn "Output directory '$config{outdir}' does not exist or is not writable.\n";
+        $parameters_ok = 0;
+    }
+
+    #Make sure that $config{outdir} ends with the forward slash character
+    $config{outdir} .= '/' unless ( $config{outdir} =~ /\/$/ );
+
+    #Specify the batch size for de-duplication
+    if ( hasval( $config{batch_size} ) ) {
+        if ( $config{batch_size} < 10_000_000 ) {
+            warn "Batch size needs to be at least 10,000,000 bps\n";
+            warn "Re-adjusting batch size to 10,000,000 bps\n";
+            $config{batch_size} = 100_000_000;
+        }
+    } else {
+        $config{batch_size} = 100_000_000;
+    }
+
+    unless ( hasval( $config{threads} ) ) {
+        $config{threads} = 1;
+    }
+
+    checkR( \%config );    #Check R installed
+
+    return $parameters_ok;
+}
+
+###################################
+#Subroutine "summary_file_creator":
+#creates the summary files
+sub summary_file_creator {
+
+    unless ( hasval( $config{datestamp} ) ) {
+        $config{datestamp} = datestampGenerator();
+    }
+
+    #my $summaryfile = 'hicup_deduplicator_summary_' . $config{datestamp} . '.txt';
+    my ($summaryfile) = fileNamer( '', \%config, 'deduplicator', 0, 1, 0, 0, 0 );
+
+    if ( -e "$summaryfile" ) {
+        die "Summary file \'$summaryfile\' already exists. Please delete \'$summaryfile\'.\n";
+    }
+
+    return $summaryfile;
+}
+
+#############################
+#Subroutine 'ditag_labeller':
+#input is a paired read from a SAM file and returns a di-tag label comprising the
+#chromsome name, start position and strand of each read in the pair
+#A di-tag is defined by:
+#Forward read starting position (sonication cut site)
+#Forward read orientation
+#Reverse read starting position (sonication cut site)
+#Reverse read orientation
+sub ditag_labeller {
+
+    my ( $readF, $readR ) = @_;
+
+    my $readF_strand = ( split( /\t/, $readF ) )[1];
+    my $readF_csome  = ( split( /\t/, $readF ) )[2];
+    my $readF_start  = ( split( /\t/, $readF ) )[3];    #Most upstream base on reference genome
+    my $readF_seq    = ( split( /\t/, $readF ) )[9];
+    my $readF_sonic;
+
+    my $readR_strand = ( split( /\t/, $readR ) )[1];
+    my $readR_csome  = ( split( /\t/, $readR ) )[2];
+    my $readR_start  = ( split( /\t/, $readR ) )[3];    #Most upstream base on reference genome
+    my $readR_seq    = ( split( /\t/, $readR ) )[9];
+    my $readR_sonic;
+
+    #When determining the sonication site remember that SAM format reports the start position
+    #of the sequence as it appears in the reference genome (not the first base encountered
+    #in the sequencing read).
+    #Determine the strand to which the read mapped by analysing the SAM bitwise flag
+    #and thus whether the sonication cut site maps to the start or end of the
+    #genomic reference sequence
+    if ( $readF_strand & 0x10 ) {
+        $readF_strand = '-';
+        $readF_sonic  = $readF_start + length($readF_seq) - 1;
+    } else {
+        $readF_strand = '+';
+        $readF_sonic  = $readF_start;
+    }
+
+    if ( $readR_strand & 0x10 ) {
+        $readR_strand = '-';
+        $readR_sonic  = $readR_start + length($readR_seq) - 1;
+    } else {
+        $readR_strand = '+';
+        $readR_sonic  = $readR_start;
+    }
+
+    my $labelF = "$readF_csome\t$readF_sonic\t$readF_strand";
+    my $labelR = "$readR_csome\t$readR_sonic\t$readR_strand";
+    my $ditag_label;
+
+    #Which read of the read pair is sequenced first is random (i.e. expected to be 50:50),
+    #and is not of biological significance.
+    if ( ( $labelF cmp $labelR ) == 1 ) {
+        $ditag_label = "$labelR\t$labelF";
+    } else {
+        $ditag_label = "$labelF\t$labelR";
+    }
+}
+
+#####################
+#Subroutine "reaper":
+#reaps dead child processes
+sub reaper {
+
+    #Don't change $! and $? outside handler
+    local ( $!, $? );
+    my $pid = waitpid( -1, WNOHANG );
+    return if $pid == -1;
+    unless ( defined $children{$pid} ) {
+        return;
+    } else {
+        my $exit_value = $? >> 8;
+        if ($exit_value) {
+            $terminate = 1;
+        }
+        delete $children{$pid};
+    }
+}
+
+__DATA__
+
+HiCUP homepage: www.bioinformatics.babraham.ac.uk/projects/hicup
+
+The hicup_deduplicator script removes duplicated di-tags (retaining one 
+copy of each) from the data set
+
+SYNOPSIS
+hicup_deduplicator [OPTIONS]... -config [CONFIGURATION FILE]...
+hicup_deduplicator [OPTIONS]... [SAM/BAM FILES]...
+
+FUNCTION
+The Hi-C experimental protocol involves a PCR amplification step to generate 
+enough material for sequencing. These PCR duplicates could result in incorrect 
+inferences being drawn regarding the genomic conformation and so are removed.
+
+Parameters may be passed to HiCUP Deduplicator using a configuration file and/or 
+via the command line (thereby overriding settings specified in the 
+configuration file).
+
+COMMAND LINE OPTIONS
+
+--config       Specify the configuration file
+--help         Print help message and exit
+--outdir       Directory to write output files
+--quiet        Suppress progress reports (except warnings)
+--threads      Number of threads to use, allowing simultaneous processing  of 
+               different files
+--version      Print the program version and exit
+--zip          Compress output
+
+Full instructions on running the pipeline can be found at:
+www.bioinformatics.babraham.ac.uk/projects/hicup
+
+Steven Wingett, Babraham Institute, Cambridge, UK (steven.wingett@babraham.ac.uk)

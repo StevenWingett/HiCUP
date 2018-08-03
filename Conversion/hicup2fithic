@@ -1,0 +1,327 @@
+#!/usr/bin/perl
+
+use strict;
+use warnings;
+use Getopt::Long;
+use POSIX;
+use FindBin '$Bin';
+use lib "$Bin/../";
+use hicup_module;
+
+use Data::Dumper;
+
+###################################################################################
+###################################################################################
+##This file is Copyright (C) 2016, Steven Wingett (steven.wingett@babraham.ac.uk)##
+##                                                                               ##
+##                                                                               ##
+##This file is part of HiCUP.                                                    ##
+##                                                                               ##
+##HiCUP is free software: you can redistribute it and/or modify                  ##
+##it under the terms of the GNU General Public License as published by           ##
+##the Free Software Foundation, either version 3 of the License, or              ##
+##(at your option) any later version.                                            ##
+##                                                                               ##
+##HiCUP is distributed in the hope that it will be useful,                       ##
+##but WITHOUT ANY WARRANTY; without even the implied warranty of                 ##
+##MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the                  ##
+##GNU General Public License for more details.                                   ##
+##                                                                               ##
+##You should have received a copy of the GNU General Public License              ##
+##along with HiCUP.  If not, see <http://www.gnu.org/licenses/>.                 ##
+###################################################################################
+###################################################################################
+
+#Get user-supplied parameters
+#Option variables
+my %config = (
+	digest => '',
+	help            => '',
+	maximum => '',
+	minimum => '',
+	version => ''
+);
+
+my $config_result = GetOptions(
+			       "digest=s" => \$config{digest},
+			       "help" => \$config{help},
+			       "maximum=i" => \$config{maximum},
+			       "minimum=i" => \$config{minimum},
+			       "version" => \$config{version}
+			      );
+
+die "Could not parse options" unless ($config_result);
+
+if ( $config{help} or (!@ARGV and !hasval($config{digest}) ) ) {
+    print while (<DATA>);
+    exit(0);
+}
+
+if ( $config{version} ) {    #Print version and exit
+    print "hicup2fithic v$hicup_module::VERSION\n";
+    exit(0);
+}
+
+unless(@ARGV and $config{digest}){
+	die "Please specify BAM/SAM file(s) to process and a HiCUP --digest file.\n";
+}
+
+if( hasval($config{minimum}) and hasval($config{maximum}) ){
+	if( $config{minimum} > $config{maximum} ){
+		die "The --minimum value '$config{minimum}' may not be more than the --maximum valule '$config{maximum}'.\n";
+	}
+}
+
+
+#Process the digest file
+#Chromosome      Fragment_Start_Position Fragment_End_Position   Fragment_Number RE1_Fragment_Number     5'_Restriction_Site     3'_Restriction_Site
+my %fragments;   #%{chromosome \t 10kb_region}{Start} = "End \t Midpoint";
+
+print "Processing the digest file '$config{digest}'\n";
+
+if($config{digest} =~ /\.gz$/){
+    open (DIGEST, "zcat $config{digest} |") or die "Could not open '$config{digest}' : $!";
+  }else{
+	open(DIGEST, '<', $config{digest}) or die "Could not open '$config{digest}' : $!";
+}	
+
+my %fragments_counter;
+scalar <DIGEST>;    #Skip headers
+scalar <DIGEST>;
+while(<DIGEST>){
+
+	my $line = $_;
+	chomp $line;
+	
+	my ($csome, $start, $end) = split(/\t/, $line);
+	my $midpoint = $start +  ceil( ($end - $start + 1) / 2);   #Dividing by 2 will give .0 or .5
+	
+	$fragments_counter{"$csome\t$midpoint"} = 0;
+	
+	my $ten_kb_start = ceil( $start / 10_000 );
+    my $ten_kb_end = ceil( $end / 10_000 );
+	
+	my $ten_kb_current = $ten_kb_start;
+	 do {
+			$fragments{"$csome\t$ten_kb_current"}{$start} = "$end\t$midpoint";
+			$ten_kb_current++;
+		} while ( $ten_kb_current <= $ten_kb_end );	
+}	
+	
+close DIGEST or die "Could not close $config{digest} : $!";
+
+
+#Read in input file(s)
+ foreach my $file (@ARGV){
+ 
+	print "Processing $file\n";
+ 
+	if ( $file =~ /\.gz$/ ) {
+        open( IN, "zcat $file |" ) or die "Couldn't read '$file' : $!";
+    } elsif ( $file =~ /\.bam$/ ) {
+            open( IN, "samtools view -h $file |" ) or die "Couldn't read '$file' : $!";
+    } else {
+        open( IN, $file ) or die "Could not read '$file : $!";
+    }
+
+	my $outfile_interactions = "$file.interactions.txt";
+	my $outfile_equal_binning = "$file.equal_binning.txt";
+		
+	my %interactions_counter;
+	
+	#Set count to 0
+	foreach my $fragment (keys %fragments_counter){
+		$fragments_counter{$fragment} = 0;
+	}
+	
+	while(<IN>){
+		my $lineA = $_;
+		chomp $lineA;		
+		next if(substr($lineA, 0, 1) eq '@');    #Ignore headers
+		my $lineB = scalar <IN>;
+		chomp $lineB;
+			
+		my ($csomeA, $posA) = samMidPoint($lineA);
+		my $midpointA = lookup_midpoint($csomeA, $posA);
+		my ($csomeB, $posB) = samMidPoint($lineB);
+		my $midpointB = lookup_midpoint($csomeB, $posB);
+
+		if( hasval ($config{minimum}) ){
+			next if $csomeA ne $csomeB;    #Ignore trans contacts
+			next if( abs($posA - $posB) < $config{minimum} );
+		}
+
+		if(hasval ($config{maximum}) ){
+			next if $csomeA ne $csomeB;    #Ignore trans contacts
+			next if( abs($posA - $posB) > $config{maximum} );
+		}
+		
+		#Count frequencies
+		$fragments_counter{"$csomeA\t$midpointA"}++;
+		$fragments_counter{"$csomeB\t$midpointB"}++;
+				
+		my $interaction = interaction_formatter($csomeA, $midpointA, $csomeB, $midpointB);
+		$interactions_counter{$interaction}++;
+	}
+
+	close IN or warn "Could not close '$file' : $!";
+ 
+ 	#Produce the file with the list of fragments and the respective number of counts
+	open(BINNING, '>', $outfile_equal_binning) or die "Could not write to '$outfile_equal_binning' : $!";
+	foreach my $fragment (keys %fragments_counter){
+		my ($csome, $midpoint) = split(/\t/, $fragment);
+		my $count = $fragments_counter{$fragment};
+		my $mapable = 0;
+		$mapable = 1 if($count);
+		print BINNING "$csome\t0\t$midpoint\t$count\t$mapable\n" if $count;    #Print non-zero scores
+	}
+	close BINNING or die "Could not close '$outfile_equal_binning' : $!";
+	
+	
+	#Produce the file with the interactions count
+	open(INTERACTIONS, '>', $outfile_interactions) or die "Could not write to '$outfile_interactions' : $!";
+	foreach my $interaction (keys %interactions_counter){
+		my ($csomeA, $midpointA, $csomeB, $midpointB) = split(/\t/, $interaction);
+		my $count = $interactions_counter{$interaction};
+		print INTERACTIONS "$csomeA\t$midpointA\t$csomeB\t$midpointB\t$count\n";
+	}	
+	close INTERACTIONS or die "Could not close '$outfile_interactions' : $!";
+}
+	
+print "Processing complete";
+
+exit (0);
+
+
+##############################################################################
+#Subroutines
+##############################################################################
+
+#Subroutine: interaction_formatter
+#Takes $csomeA, $midpointA, $csomeB, $midpointB and returns this as a tab-separated ID,
+#Sorted by chromosome and then midpoint, so the returned ID is not affected by whether a
+#sequence was found in the forward or reverse read.
+sub interaction_formatter{
+	my ($csomeA, $midpointA, $csomeB, $midpointB) = @_;
+	
+	my $readA = "$csomeA\t$midpointA";
+	my $readB = "$csomeB\t$midpointB";
+	my $id;
+	
+	if( ($readA cmp $readB) == 1 ){
+		$id = "$readB\t$readA";
+	}else{
+		$id = "$readA\t$readB";
+	}
+	return $id;
+}
+
+
+
+#Subroutine: parse_read
+#Takes a BAM/SAM read and returns the chromosome and the position to lookup
+##########################################
+#Subroutine: samMidPoint
+#Receives a SAM format line and returns
+#chromosome, midpoint of the position of then
+#read
+sub samMidPoint {
+	my $read = $_[0];
+
+	my $csome = ( split( /\t/, $read ) )[2];
+	my $start_genome_perspective = ( split( /\t/, $read ) )[3];
+	my $seq   = ( split( /\t/, $read ) )[9];
+	
+	my $length = length($seq);	
+	my $midpoint = $start_genome_perspective + ceil($length / 2);
+
+	return ( $csome, $midpoint );
+}
+
+
+
+#Subroutine: lookup_midpoint
+#Takes chromosome ID and a position and returns the midpoint of the fragment encompassing this position
+#%fragments;   #%{chromosome \t 10kb_region}{Start} = "End \t Midpoint";
+sub lookup_midpoint{
+	my ($csome, $pos) = @_;
+	my $ten_kb_region = ceil( $pos / 10_000 );
+	my $frag_end;
+	my $midpoint;
+	my $fragment_identified = 0;
+
+	foreach ( keys %{ $fragments{"$csome\t$ten_kb_region"} } ) {     #%fragments declared outside of subroutine
+		my $frag_start = $_;    #Assign value here to ensure $frag_start is initialized outside the foreach loop
+		($frag_end, $midpoint) = split( /\t/, $fragments{"$csome\t$ten_kb_region"}{$frag_start} );
+
+		#Check whether read1 is on this fragment
+		if ( ( $frag_start <= $pos ) and ( $frag_end >= $pos ) ) {
+			$fragment_identified = 1;
+			last;
+		}
+	}
+	
+	die "Chromosome : '$csome', Position: '$pos' not found!\n" unless($fragment_identified);
+	return $midpoint;
+}
+
+
+
+__DATA__
+
+HiCUP homepage: www.bioinformatics.babraham.ac.uk/projects/hicup
+
+The hicup2fithic script converts HiCUP BAM/SAM files to a format compatible 
+with Fit-Hi-C (Fit-Hi-C pages found at:
+https://noble.gs.washington.edu/proj/fit-hi-c).
+
+SYNOPSIS
+
+hicup2fithic [OPTIONS]
+hicup2fithic [OPTIONS] [SAM/BAM FILES]...
+
+FUNCTION
+
+HiCUP generates SAM/BAM files of mapped, filtered paired-end reads 
+constituting the sequenced valid Hi-C di-tags. These may then be analysed by a 
+variety of specialised tools, but before this is possible the datasets will 
+need parsing into an appropriate format.
+
+The hicup2fithic script converts HiCUP BAM/SAM files to a format compatible 
+with Fit-Hi-C. The script produces two output files, the first lists all 
+restriction fragments:
+
+Column1: chromosome name
+Column2: extra field (set to 0)
+Column3: fragment midpoint
+Column4: number of mid-range contacts
+Column5: mapability
+
+The second contains a list of mid-range contacts. Only the fragment pairs with 
+non-zero contact counts are listed.
+
+Column1: fragment1 chromosome name
+Column2: fragment1 midpoint
+Column3: fragment2 chromosome name
+Column4: fragment2 midpoint
+Column5: contact count
+
+(Note: At present this only allows production of datasets that have not been normalised.)
+
+If no --maximum or --minimum parameters are specified, all contacts will
+be written to the final files.
+
+COMMAND LINE OPTIONS
+
+--help         Print help message and exit
+--digest       HiCUP Digester generated digest file 
+--maximum      The maximum allowed distance separation (bps) between contacts
+               (selecting this option also removes trans contacts)
+--minimum      The maximum allowed distance separation (bps) between contacts
+               (selecting this option also removes trans contacts)
+--version      Print the program version and exit
+
+Full instructions on running the pipeline can be found at:
+www.bioinformatics.babraham.ac.uk/projects/hicup
+
+Steven Wingett, Babraham Institute, Cambridge, UK (steven.wingett@babraham.ac.uk)

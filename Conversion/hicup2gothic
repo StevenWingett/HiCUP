@@ -1,0 +1,141 @@
+#!/usr/bin/perl
+
+use strict;
+use warnings;
+use Getopt::Long;
+use FindBin '$Bin';
+use lib "$Bin/../";
+use hicup_module;
+
+###################################################################################
+###################################################################################
+##This file is Copyright (C) 2016, Steven Wingett (steven.wingett@babraham.ac.uk)##
+##                                                                               ##
+##                                                                               ##
+##This file is part of HiCUP.                                                    ##
+##                                                                               ##
+##HiCUP is free software: you can redistribute it and/or modify                  ##
+##it under the terms of the GNU General Public License as published by           ##
+##the Free Software Foundation, either version 3 of the License, or              ##
+##(at your option) any later version.                                            ##
+##                                                                               ##
+##HiCUP is distributed in the hope that it will be useful,                       ##
+##but WITHOUT ANY WARRANTY; without even the implied warranty of                 ##
+##MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the                  ##
+##GNU General Public License for more details.                                   ##
+##                                                                               ##
+##You should have received a copy of the GNU General Public License              ##
+##along with HiCUP.  If not, see <http://www.gnu.org/licenses/>.                 ##
+###################################################################################
+###################################################################################
+
+##########################################################
+#Get user-supplied parameters
+#Option variables
+my %config = (
+  help            => '',
+  version => ''
+);
+
+
+my $config_result = GetOptions(
+    "help"        => \$config{help},
+    "version"     => \$config{version},
+);
+die "Could not parse options.\n" unless ($config_result);
+
+
+if ( $config{help} ) {
+    print while (<DATA>);
+    exit(0);
+}
+
+if ( $config{version} ) {    #Print version and exit
+    print "hicup2gothic v$hicup_module::VERSION\n";
+    exit(0);
+}
+
+unless(@ARGV){
+    print while (<DATA>);
+    exit(0);
+}
+
+
+##########################################################
+#Parse data
+my @files = @ARGV;    #Pass file names as command-line arguments
+foreach my $file (@files){
+  
+  chomp $file;
+  print "Processing $file\n";
+  
+  if ($file =~ /\.gz$/){
+    open (IN,"zcat $file |") or die "Couldn't read $file : $!";  
+  }
+  elsif ($file =~ /\.bam$/) {
+    open (IN,"samtools view $file |") or die "Couldn't read $file: $!";
+  }
+  else{
+    open (IN, $file) or die "Could not open $file\n";
+  }
+  
+  open (OUT, ">$file".".gothic") or die "Could not write to $file".".gothic\n";
+  
+  while(<IN>){
+
+    my $line = $_;
+    chomp $line;
+    
+    next if(substr($line,0,1) eq '@');    #Ignore headers
+
+    my($id, $sam_flag, $csome, $position) = split(/\t/, $line);
+    
+    print OUT "$id\t$sam_flag\t$csome\t$position\n";
+
+  }
+  close IN;
+  close OUT;
+}
+
+print "Processing complete\n";
+
+exit (0);
+
+
+__DATA__
+
+HiCUP homepage: www.bioinformatics.babraham.ac.uk/projects/hicup
+
+The hicup2gothic script converts HiCUP BAM/SAM files to a format compatible 
+with GOTHiC (GOTHiC Hi-C pages found at:
+http://master.bioconductor.org/packages/release/bioc/html/GOTHiC.html).
+
+SYNOPSIS
+
+hicup2gothic [OPTIONS]
+hicup2gothic [SAM/BAM FILES]...
+
+FUNCTION
+
+HiCUP generates SAM/BAM files of mapped, filtered paired-end reads 
+constituting the sequenced valid Hi-C di-tags. These may then be analysed by a 
+variety of specialised tools, but before this is possible the datasets will 
+need parsing into an appropriate format.
+
+The hicup2gothic script converts HiCUP BAM/SAM files to a format compatible with 
+GOTHiC i.e. 4 columns, with reads on separate lines:
+
+Column1: read ID
+Column2: SAM flag
+Column3: chromosome name
+Column4: position
+
+COMMAND LINE OPTIONS
+
+--help         Print help message and exit
+--version      Print the program version and exit
+
+Full instructions on running the pipeline can be found at:
+www.bioinformatics.babraham.ac.uk/projects/hicup
+
+Steven Wingett, Babraham Institute, Cambridge, UK (steven.wingett@babraham.ac.uk)

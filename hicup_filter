@@ -1,0 +1,1504 @@
+#!/usr/bin/perl
+
+use strict;
+use warnings;
+use Getopt::Long;
+use POSIX ":sys_wait_h";    #for nonblocking read
+use POSIX;
+use Carp;
+use FindBin '$Bin';
+use lib $Bin;
+use hicup_module;
+use hicup_module qw(hashVal outdirFileNamer);
+
+use Data::Dumper;
+
+###################################################################################
+###################################################################################
+##This file is Copyright (C) 2018, Steven Wingett (steven.wingett@babraham.ac.uk)##
+##                                                                               ##
+##                                                                               ##
+##This file is part of HiCUP.                                                    ##
+##                                                                               ##
+##HiCUP is free software: you can redistribute it and/or modify                  ##
+##it under the terms of the GNU General Public License as published by           ##
+##the Free Software Foundation, either version 3 of the License, or              ##
+##(at your option) any later version.                                            ##
+##                                                                               ##
+##HiCUP is distributed in the hope that it will be useful,                       ##
+##but WITHOUT ANY WARRANTY; without even the implied warranty of                 ##
+##MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the                  ##
+##GNU General Public License for more details.                                   ##
+##                                                                               ##
+##You should have received a copy of the GNU General Public License              ##
+##along with HiCUP.  If not, see <http://www.gnu.org/licenses/>.                 ##
+###################################################################################
+###################################################################################
+
+#Option variables
+my %config = (
+    digest    => '',
+    config    => '',
+    example   => '',
+    datestamp => '',
+    help      => '',
+    outdir    => '',
+    quiet     => '',
+    threads   => '',
+    version   => '',
+    longest   => '',
+    shortest  => '',
+    r         => '',
+    re1       => '',
+    re2       => '',
+    samtools  => '',
+    zip       => ''
+);
+
+##########################################################
+#Get user-supplied parameters
+my $config_result = GetOptions(
+    "datestamp=s" => \$config{datestamp},    #Hidden option passed from the HiCUP master script
+    "digest=s"    => \$config{digest},
+    "example"     => \$config{example},
+    "config=s"    => \$config{config},
+    "help"        => \$config{help},
+    "outdir=s"    => \$config{outdir},
+    "longest=i"   => \$config{longest},
+    "quiet"       => \$config{quiet},
+    "shortest=i"  => \$config{shortest},
+    "threads=i"   => \$config{threads},
+    "version"     => \$config{version},
+    "r=s"         => \$config{r},
+    "samtools"    => \$config{samtools},
+    "zip"         => \$config{zip}
+);
+
+die "Could not parse options.\n" unless ($config_result);
+
+$config{help} = 1 unless ( hashVal(%config) );    #Print help and exit if no command line parameters
+
+if ( $config{help} ) {
+    print while (<DATA>);
+    exit(0);
+}
+
+#Print version and exit
+if ( $config{version} ) {
+    print "HiCUP Filter v$hicup_module::VERSION\n";
+    exit(0);
+}
+
+if ( $config{example} ) {
+    print_example_config_file('filter_example.conf');
+    exit(0);
+}
+
+check_dependencies();
+
+my @files;    #Files to be processed
+@files = process_config( $config{config}, \%config ) if ( hasval( $config{config} ) );    #Modifies %config and returns an array of the filenames
+push( @files, @ARGV ) if @ARGV;
+@files = sort deduplicate_array (@files);
+die "Please specify files to be filtered.\n" unless (@files);
+
+##########################################################
+#Check user-supplied parameters are ok
+unless ( check_parameters() ) {
+    die "Please change configuration file and/or command-line parameters and/or installation accordingly\n";
+}
+
+my $protocol = "Double_Digest";
+my %ditag_sizes;    #Hash of %{ditag_size} -> frequency. (For the double-digest protocol the sizes will be of the di-tags that map to restriction fragment sites only i.e. ignore "unmapped")
+my $hicup_executed = 0;
+if ( hasval( $config{datestamp} ) ) {    #Script executed by hicup master script
+    $hicup_executed = 1;
+}
+
+my $insert_size_check;
+if ( $config{longest} or $config{shortest} ) {
+    $insert_size_check = 1;
+}
+
+my %inOutFilenames = outdirFileNamer( \@files, $config{outdir} );
+
+unless ( hasval( $config{datestamp} ) ) {
+    $config{datestamp} = datestampGenerator();
+}
+
+#Check input files exist and output files don't.
+die "Please correctly specify files to be filtered.\n" unless ( check_files_exist( \@files, 'EXISTS' ) );
+
+my @hicup_filter_outfiles = fileNamer( \@files, \%config, 'filter', 1, 1, 1, 1, 1 );
+foreach my $outfile (@hicup_filter_outfiles) {
+    $outfile = $config{outdir} . $outfile;
+}
+
+unless ( check_files_exist( \@hicup_filter_outfiles, 'NOT_EXISTS' ) ) {
+    die "HiCUP Filter will not run until files have been removed.\n";
+}
+
+#Create a directory for rejected Hi-C sequences
+my ($rejdir) = fileNamer( '', \%config, 'filter', 0, 0, 0, 0, 1 );    #Rejects folder name
+$rejdir = $config{outdir} . $rejdir;
+mkdir $rejdir or die "Could not write to '$rejdir'\n";
+
+#Processes the data in accordance with the protocol followed (i.e. double digest or sonication)
+print "Filtering with HiCUP Filter v$hicup_module::VERSION\n" unless hasval( $config{quiet} );
+
+my $terminate = 0;                                                    #Instruct script to die if error detected in child process
+my %digest_fragments;
+my %last_first_bases;                                                 #Lookup hash for double-digest analysis, but needs to be declared outside the conditional block to be available to child processes
+my %children;                                                         #Hash of child processes
+
+print "Processing digest file $config{digest}\n" unless hasval( $config{quiet} );
+
+process_digest_file();                                                #Determines i)protocol followed i)populates %digest_fragments and, if appropriate, ii)populates %last_first_bases
+my $summaryfile = summary_file_creator();                             #Creates a summary file in accordance with the protocol followed
+
+if ( $protocol eq 'Double_Digest' ) {
+    foreach my $filename (@files) {
+        my $pid = fork();
+        die "cannot fork" unless defined $pid;
+
+        if ( $pid == 0 ) {
+            double_digest_hic($filename);
+            exit 0;
+        } else {
+            $children{$pid} = 1;
+            while ( keys(%children) == $config{threads} ) {
+                sleep(1);
+                reaper();
+            }
+        }
+    }
+    close SUMMARY or die "Could not close filehandle on '$summaryfile' : $!";
+} else {
+    foreach my $filename (@files) {
+        my $pid = fork();
+        die "cannot fork" unless defined $pid;
+
+        if ( $pid == 0 ) {
+            sonicate_hic($filename);
+            exit 0;
+        } else {
+            $children{$pid} = 1;
+            while ( keys(%children) == $config{threads} ) {
+                sleep(1);
+                reaper();
+            }
+        }
+    }
+}
+
+#Ensure all child processes have terminated before exiting
+do {
+    sleep(1);
+    reaper();
+} until ( keys(%children) == 0 );
+
+if ($terminate) {
+    die "hicup_filter unable to process files\n";
+}
+
+#Produce summary graph
+my $graphSuffix = ( fileNamer( '', \%config, 'filter', 0, 0, 1, 0, 0 ) )[1];    #Pass '' - which will return a suffix only i.e ".[suffix].svg"
+
+unless ( $config{r} eq '0' ) {
+    
+    if(-s $summaryfile){
+        
+        if ( $protocol eq 'Sonication' ) {
+            my $command = $config{r} . 'script ' . "$Bin/r_scripts/hicup_filter_sonication_summary.r $summaryfile $config{outdir} $graphSuffix";
+            !system("$command") or warn "Could not produce hicup_filter pie chart: $command: $!";
+        } else {
+            my $command = $config{r} . 'script ' . "$Bin/r_scripts/hicup_filter_double_digest_summary.r $summaryfile $config{outdir} $graphSuffix";
+            !system("$command") or warn "Could not produce hicup_filter summary pie chart: $command: $!";
+        }
+
+    }else{
+        warn "Could not produce hicup_filter summary pie chart since '$summaryfile' contains no data\n";
+    }
+
+}
+
+print "Filtering complete\n" unless hasval( $config{quiet} );
+
+exit(0);
+
+#######################################################################################
+#Subroutines                                                                          #
+#######################################################################################
+
+###########################
+#Subroutine "check_dependencies"
+#Evaluates if the relevant dependencies
+#are installed, and if so stores the path
+#in the %dependencies hash_ref
+sub check_dependencies {
+
+    #Check whether SAMtools is installed
+    if ( !system "which samtools >/dev/null 2>&1" ) {
+        $config{samtools} = `which samtools`;
+    }
+    chomp $config{samtools};
+}
+
+############################
+#Subroutine "check_parameters":
+#Check the user supplied parameters are ok
+#Uses global variables
+sub check_parameters {
+    my $parameters_ok = 1;
+
+    #Check whether SAMtools is installed
+    unless ( hasval( $config{samtools} ) ) {
+        if ( !system "which samtools >/dev/null 2>&1" ) {
+            $config{samtools} = `which samtools`;
+            chomp $config{samtools};
+        }
+    }
+
+    if ( hasval( $config{threads} ) ) {
+        if ( $config{threads} < 1 ) {    #Ensure threads not set to less than 1!
+            warn "Threads changed from config{threads} to 1\n";
+            $config{threads} = 1;
+        }
+    } else {
+        print "Number of threads set to 1\n";
+        $config{threads} = 1;
+    }
+
+    $config{outdir} = './' unless ( hasval $config{outdir} );    #Set to CWD if not defined
+
+    #Check the output directory exists
+    unless ( -d $config{outdir} ) {
+        warn "Output directory '$config{outdir}' does not exist.\n";
+        $parameters_ok = 0;
+    }
+
+    #Make sure that $config{outdir} ends with the forward slash character
+    $config{outdir} .= '/' unless ( $config{outdir} =~ /\/$/ );
+
+    unless ( hasval( $config{digest} ) ) {
+        warn "Please specify a Hi-C SAM file and a digested reference genome file (--digest), or alternatively a configuration file (--config).\n";
+        $parameters_ok = 0;
+    }
+
+    #Check size-selection
+    foreach my $size_parameter ( 'longest', 'shortest' ) {
+        if ( hasval( $config{$size_parameter} ) ) {
+            unless ( $config{$size_parameter} =~ /^\d+$/ ) {
+                warn "Size-selection parameter '--" . $size_parameter . "' may only be an integer\n";
+                $parameters_ok = 0;
+            }
+        } else {
+            $config{$size_parameter} = 0;
+        }
+    }
+    checkR( \%config );    #Check R installed
+
+    return $parameters_ok;
+}
+
+##################################
+#Subroutine "process_digest_file":
+#reads the digest file, determines whether a double-digest or a sonication protocol
+#was followed and processes accordingly, returning a hash of the results.
+sub process_digest_file {
+    if ( $config{digest} =~ /.*\.gz$/ ) {
+        open( DIGEST, "zcat $config{digest} |" ) or die "Cannot open file: $!";
+    } else {
+        open( DIGEST, $config{digest} ) or die "Cannot open file: $!";
+    }
+
+    my $first_line = <DIGEST>;    #Determine whether an enzymic double digest or sonication protocol
+    unless ( $first_line =~ /^.+\t(.+)\t(.+)\t.+$/ ) {
+        die "Genome digest file header is not in the correct format\n";
+    }
+
+    if ( $2 eq "Restriction_Enzyme2:None" ) {    #Sonication protocol
+        $protocol = "Sonication";
+
+        print "Sonication protocol followed - $1\n" unless $config{quiet};
+
+        while (<DIGEST>) {
+            unless (/\w+\t\d+\t\d+\t\d+/) {
+                next;
+            }
+            my $chromosome_name            = ( split /\t/ )[0];
+            my $first_base                 = ( split /\t/ )[1];
+            my $last_base                  = ( split /\t/ )[2];
+            my $fragment_number            = ( split /\t/ )[3];
+            my $ten_kb_region              = ceil( $first_base / 10000 );
+            my $fragment_end_ten_kb_region = ceil( $last_base / 10000 );
+
+            do {
+                $digest_fragments{"$chromosome_name\t$ten_kb_region"}{$first_base} = "$last_base\t$fragment_number";
+                $ten_kb_region++;
+            } while ( $ten_kb_region <= $fragment_end_ten_kb_region );
+        }
+
+    } else {    #Double-digest protocol
+
+        #Determine the sequences of re1 and re2
+        unless ( $first_line =~ /.+\t.+\[(.+)\]\t.+\[(.+)\]/ ) {
+            die "Genome digest file $config{digest} is not in the correct format.\n";
+        }
+
+        $config{re1} = $1;    #Declared as a global variable
+        $config{re2} = $2;    #Declared as a global variable
+
+        print "Double digest protocol followed using $config{re1} and then $config{re2}\n" unless $config{quiet};
+
+        unless ( $config{re1} =~ /^[ATCG\^]+$/ ) {
+            die "The restriction site (re1) needs to be a valid DNA sequence.\n";
+        }
+        unless ( ( $config{re1} =~ tr/\^// ) == 1 ) {
+            die "The restriction site (re1) should contain one cut position, denoted by '^'.\n";
+        }
+        unless ( $config{re2} =~ /^[ATCG\^]+$/ ) {
+            die "The restriction site (re2) needs to be a valid DNA sequence.\n";
+        }
+        unless ( ( $config{re2} =~ tr/\^// ) == 1 ) {
+            die "The restriction site (re2) should contain one cut position, denoted by '^'.\n";
+        }
+
+        #If the restriction enzymes are not blunt-ended cutters, the sticky ends will be filled-in
+        #prior to A-tailing. This needs to be taken into account when aligning reads to the digested reference genome.
+        my ( $re1_start_correction, $re1_end_correction ) = fillin( $config{re1} );
+        my ( $re2_start_correction, $re2_end_correction ) = fillin( $config{re2} );
+
+        #Process the genome digest file: create a hash with the chromosome number + restriction fragment start positions as the keys.
+        #The remaining terms are stored as hash values.
+        $_ = <DIGEST>;    #Ignore header line.
+
+        while (<DIGEST>) {
+
+            #Chromosome, Start position, End Position, Fragment Number, Re1 Fragment Number, 5'-Cut Site, 3'-Cutsite.
+            if (/^\s$/) {
+                next;
+            }
+
+            my ( $chromosome, $first_base, $last_base, $fragment_number, $re1_fragment_number, $five_prime_enz, $three_prime_enz ) = split /\t/;
+
+            if ( $five_prime_enz eq 'RE1' ) {
+                $first_base += $re1_start_correction;
+            } elsif ( $five_prime_enz eq 'RE2' ) {
+                $first_base += $re2_start_correction;    #or do nothing if enzyme equals 'NONE'
+            }
+
+            if ( $three_prime_enz eq 'RE1' ) {
+                $last_base += $re1_end_correction;
+            } elsif ( $three_prime_enz eq 'RE2' ) {
+                $last_base += $re2_end_correction;       #or nothing if enzyme equals 'NONE'
+            }
+
+            $digest_fragments{ $chromosome . "\t" . $first_base } = join( "\t", $last_base, $fragment_number, $re1_fragment_number, $five_prime_enz, $three_prime_enz );
+        }
+    }
+
+    #Forward reads will map to the front of a restriction fragment, whereas reverse reads will map to the end.
+    #Consequently we need to relate end positions to a given fragment.
+    #The code below creates a "lookup" hash with fragment end positions as keys and first base pair positions as values.
+    foreach my $key ( keys %digest_fragments ) {
+        my $chromosome = ( split( /\t/, $key ) )[0];
+        my $first_base = ( split( /\t/, $key ) )[1];
+        my $last_base  = ( split( /\t/, $digest_fragments{$key} ) )[0];
+        $last_first_bases{"$chromosome\t$last_base"} = "$chromosome\t$first_base";
+    }
+    close DIGEST or die "Could not close filehandle on '$config{digest}' : $!";
+}
+
+#####################
+#Subroutine "fillin":
+#fills-in overhangs of a restriction fragment
+#Receives the restriction site sequence (positive strand) as input, returns the values of i) how many bases the
+#front should be brought forwards and ii) by how many bases the end should be extended. Both the returned values
+#refer to the positive strand.
+#For example, consider the HindIII sequence A^AGCTT. The front of the sequence will remain the same i.e. the base
+#after the cute site, but the end of the sequence will be extened by 4 bases. The returned values will therefore
+#be 0,4.
+sub fillin {
+    my $re = $_[0];
+    my ( $before_cut, $after_cut ) = split( /\^/, $re );
+    my $difference = length($after_cut) - length($before_cut);
+
+    if ( $difference > 0 ) {
+        return ( 0, $difference );
+    } elsif ( $difference < 0 ) {
+        return ( $difference, 0 );
+    } else {
+        return ( 0, 0 );
+    }
+}
+
+###################################
+#Subroutine "summary_file_creator":
+#creates the summary files for both Hi-C protocols
+#Opens a filehandle to the summary file and returns the
+#summary filename
+sub summary_file_creator {
+
+    # my $summaryfile = $config{outdir}.'hicup_filter_summary_'.$config{datestamp}.'.txt';
+    my ($summaryfile) = fileNamer( '', \%config, 'filter', 0, 1, 0, 0, 0 );    #Array returned
+    $summaryfile = $config{outdir} . $summaryfile;
+
+    if ( -e "$summaryfile" ) {
+        die "Summary file \'$summaryfile\' already exists. Please delete \'$summaryfile\'.\n\n";
+    }
+    open( SUMMARY, ">$summaryfile" ) or die "Could not write to $summaryfile\n";
+
+    if ( $protocol eq 'Double_Digest' ) {
+
+        #Create a summary file of the results and begin printing output to that file.
+        print SUMMARY
+"File\tTotal_pairs\tValid_pairs\tCis_<10kbp\tCis_>10kbp\tTrans-ligation\tInvalid_pairs\tNo_ligation\tRe-ligation\tSelf-ligation\tNo_Ligation_Internal_Re2\tUnclassified\tWrong_size\tUnmapped\n";
+    } else {
+        print SUMMARY
+          "File\tTotal_pairs\tValid_pairs\tCis_<10kbp\tCis_>10kbp\tTrans\tInvalid_pairs\tSame_circularised\tSame_dangling_ends\tSame_internal\tRe-ligation\tContiguous_sequence\tWrong_size\n";
+    }
+
+    return $summaryfile;
+}
+
+################################
+#Subroutine "double_digest_hic":
+#analyses the data assuming a double-digest protocol has been followed
+sub double_digest_hic {
+    my $filename = $_[0];
+
+    if ( $filename =~ /\.gz$/ ) {
+        open( PAIRED_READS, "zcat $filename |" ) or die "Couldn't read $filename : $!";
+    } elsif ( $filename =~ /\.bam$/ ) {
+        if ( $config{samtools} ) {
+            open( PAIRED_READS, "$config{samtools} view -h $filename |" ) or die "Couldn't read $filename: $!";
+        } else {
+            die "Cannot process BAM files - either install SAMtools to process '$filename' or only provide SAM files\n";
+        }
+    } else {
+        open( PAIRED_READS, $filename ) or die "Could not read $filename: $!";
+    }
+
+    #Create outputfiles
+    my $outputfilename_base = fileNamer( $filename, \%config, 'filter' );
+
+    #my $outputfilename_base = $filename;
+    my $file_extension;
+    my $write_command;
+
+    # $outputfilename_base =~ s/^.+\///;    #Remove folder references
+
+    if ( $config{samtools} and $config{zip} ) {
+        $file_extension = '.bam';                                   #BAM format
+        $write_command  = '| samtools view -bSh 2>/dev/null - >';
+    } elsif ( $config{zip} ) {
+        $file_extension = '.sam.gz';
+        $write_command  = "| gzip -c - >";                          #SAM format then compressed
+    } else {
+        $file_extension = '.sam';                                   #SAM format
+        $write_command  = ">";
+    }
+
+    my @output_files;
+    open( HIC_READS, $write_command . $config{outdir} . $outputfilename_base ) or die $!;
+    push( @output_files, $config{outdir} . $outputfilename_base );
+
+    open( UNMAPPED, $write_command . $rejdir . '/' . $outputfilename_base . "_unmapped" . $file_extension ) or die $!;
+    push( @output_files, $rejdir . '/' . $outputfilename_base . "_unmapped" . $file_extension );
+
+    if ($insert_size_check) {
+        open( WRONG_SIZE, $write_command . $rejdir . '/' . $outputfilename_base . "_wrong_size" . $file_extension ) or die $!;
+        push( @output_files, $rejdir . '/' . $outputfilename_base . "_wrong_size" . $file_extension );
+    }
+
+    open( NO_LIGATION, $write_command . $rejdir . '/' . $outputfilename_base . "_no_ligation" . $file_extension ) or die $!;
+    push( @output_files, $rejdir . '/' . $outputfilename_base . "_no_ligation" . $file_extension );
+
+    open( INTERNAL_RE2, $write_command . $rejdir . '/' . $outputfilename_base . "_internal_re2" . $file_extension ) or die $!;
+    push( @output_files, $rejdir . '/' . $outputfilename_base . "_internal_re2" . $file_extension );
+
+    open( SELF_LIGATION, $write_command . $rejdir . '/' . $outputfilename_base . "_self_ligation" . $file_extension ) or die $!;
+    push( @output_files, $rejdir . '/' . $outputfilename_base . "_self_ligation" . $file_extension );
+
+    open( RE_LIGATION, $write_command . $rejdir . '/' . $outputfilename_base . "_re_ligation" . $file_extension ) or die $!;
+    push( @output_files, $rejdir . '/' . $outputfilename_base . "_re_ligation" . $file_extension );
+
+    open( UNCLASSIFIED, $write_command . $rejdir . '/' . $outputfilename_base . "_unclassified" . $file_extension ) or die $!;
+    push( @output_files, $rejdir . '/' . $outputfilename_base . "_unclassified" . $file_extension );
+
+    open( INVALID, $write_command . $rejdir . '/' . $outputfilename_base . "_invalid" . $file_extension ) or die $!;
+    push( @output_files, $rejdir . '/' . $outputfilename_base . "_invalid" . $file_extension );
+
+    #Hash to count the different types of Hi-C ligation products
+    my %category_counter = (
+        'No_ligation'    => 0,
+        'Internal_Re2'   => 0,
+        'Self-ligation'  => 0,
+        'Re-ligation'    => 0,
+        'Cis_close'      => 0,
+        'Cis_far'        => 0,
+        'Trans-ligation' => 0,
+        'Wrong_size'     => 0,
+        'Unclassified'   => 0,
+        'Unmapped'       => 0,
+        'Total'          => 0,
+        'Invalid_format' => 0
+    );
+
+    #Read through the pair file and match the reads against %digest_fragments
+    my %digest_results;
+
+    print "Filtering $filename\n" unless $config{quiet};
+
+    while (<PAIRED_READS>) {
+        if (/^@/) {    #Print SAM header lines
+            print HIC_READS $_;
+            print UNMAPPED $_;
+            if ($insert_size_check) {
+                print WRONG_SIZE $_;
+            }
+            print NO_LIGATION $_;
+            print INTERNAL_RE2 $_;
+            print SELF_LIGATION $_;
+            print RE_LIGATION $_;
+            print UNCLASSIFIED $_;
+            print INVALID $_;
+            next;
+        }
+        my $read1 = $_;
+        chomp $read1;
+        my $read2 = scalar <PAIRED_READS>;
+        chomp $read2;
+
+        #Check the reads are in the valid format
+        unless ( $read1 =~ /^.+\t\d+\t\S+\t\d+\t\d+\t\S+\t.+\t\d+\t\d+\t[ATCGN]+\t.+$/ and $read2 =~ /^.+\t\d+\t\S+\t\d+\t\d+\t\S+\t.+\t\d+\t\d+\t[ATCGN]+\t.+$/ ) {
+            $category_counter{Invalid_format}++;
+            print INVALID "$read1\n";
+            print INVALID "$read2\n";
+            next;
+        }
+
+        $category_counter{Total}++;
+
+        #Compare the reads to the genome digest file.
+        #Determine if we need to map to the front or rear of a fragment.
+        my $chromosome1          = ( split( /\t/, $read1 ) )[2];
+        my $chromosome2          = ( split( /\t/, $read2 ) )[2];
+        my $chromosome_position1 = ( split( /\t/, $read1 ) )[3];
+        my $chromosome_position2 = ( split( /\t/, $read2 ) )[3];
+        my $position_to_lookup1;
+        my $position_to_lookup2;
+        my $read1_strand;
+        my $read2_strand;
+
+        if ( ( ( split( /\t/, $read1 ) )[1] ) & 0x10 ) {    #Analyse the SAM bitwise flag to determine which strand
+            $read1_strand = '-';
+        } else {
+            $read1_strand = '+';
+        }
+
+        if ( ( ( split( /\t/, $read2 ) )[1] ) & 0x10 ) {    #Analyse the SAM bitwise flag to determine which strand
+            $read2_strand = '-';
+        } else {
+            $read2_strand = '+';
+        }
+
+        if ( $read1_strand eq '+' ) {
+            $position_to_lookup1 = $chromosome1 . "\t" . $chromosome_position1;
+        } else {
+            $position_to_lookup1 = $chromosome1 . "\t" . ( $chromosome_position1 + ( length( ( split( /\t/, $read1 ) )[9] ) ) - 1 ); #Add (read length - 1) to reach the end of the restriction fragment
+            if ( exists $last_first_bases{$position_to_lookup1} ) {
+                $position_to_lookup1 = $last_first_bases{$position_to_lookup1};                                                      #Find the first base of the fragment
+            } else {
+                $category_counter{"Unmapped"}++;
+                print UNMAPPED "$read1\n";
+                print UNMAPPED "$read2\n";
+                next;
+            }
+        }
+
+        if ( $read2_strand eq '+' ) {
+            $position_to_lookup2 = $chromosome2 . "\t" . $chromosome_position2;
+        } else {
+            $position_to_lookup2 = $chromosome2 . "\t" . ( $chromosome_position2 + ( length( ( split( /\t/, $read2 ) )[9] ) ) - 1 ); #Add (read length - 1) to reach the end of the restriction fragment
+            if ( exists $last_first_bases{$position_to_lookup2} ) {
+                $position_to_lookup2 = $last_first_bases{$position_to_lookup2};                                                      #Find the first base of the fragment
+            } else {
+                $category_counter{"Unmapped"}++;
+                print UNMAPPED "$read1\n";
+                print UNMAPPED "$read2\n";
+                next;
+            }
+        }
+
+        #Begin the categorisation.
+        my $fragment1_data;
+        my $fragment2_data;
+
+        if ( exists $digest_fragments{$position_to_lookup1} ) {
+            $fragment1_data = $position_to_lookup1 . "\t" . $digest_fragments{$position_to_lookup1};
+        } else {
+            $category_counter{"Unmapped"}++;
+            print UNMAPPED "$read1\n";
+            print UNMAPPED "$read2\n";
+            next;
+        }
+
+        if ( exists $digest_fragments{$position_to_lookup2} ) {
+            $fragment2_data = $position_to_lookup2 . "\t" . $digest_fragments{$position_to_lookup2};
+        } else {
+            $category_counter{"Unmapped"}++;
+            print UNMAPPED "$read1\n";
+            print UNMAPPED "$read2\n";
+            next;
+        }
+
+        #Determines the type of fragment pair e.g. cis-ligations, trans-ligation.
+        my $linkage;
+        if ( ( split( /\t/, $fragment1_data ) )[0] eq ( split( /\t/, $fragment2_data ) )[0] ) {
+            if ( ( split( /\t/, $fragment1_data ) )[4] == ( split( /\t/, $fragment2_data ) )[4] ) {
+                $linkage = "Same(Re1)";
+                if ( ( split( /\t/, $fragment1_data ) )[3] == ( split( /\t/, $fragment2_data ) )[3] ) {
+                    $linkage .= "_same(Re1-Re2)";
+                } elsif ( abs( ( split( /\t/, $fragment1_data ) )[3] - ( split( /\t/, $fragment2_data ) )[3] ) == 1 ) {
+                    $linkage .= "_adjacent(Re1-Re2)";
+                } else {
+                    $linkage .= "_different(Re1-Re2)";
+                }
+            } elsif ( abs( ( split( /\t/, $fragment1_data ) )[4] - ( split( /\t/, $fragment2_data ) )[4] ) == 1 ) {
+                $linkage = "Adjacent(Re1)";
+            } else {
+                $linkage = "Cis(not_adjacent_Re1)";
+            }
+        } else {
+            $linkage = "Trans";    # On different chromosomes.
+        }
+
+        #Determines the 5'-> 3' orientation of restriction enzymes to distinguish between ligation products.
+        ##Firstly, check whether a read is in the forward or reverse orientation (+ or -) and process accordingly.
+        my $enzymes;
+        if ( $read1_strand eq '+' ) {
+            $enzymes = ( split( /\t/, $fragment1_data ) )[5] . "_" . ( split( /\t/, $fragment1_data ) )[6] . "+";
+        } else {
+            $enzymes = ( split( /\t/, $fragment1_data ) )[6] . "_" . ( split( /\t/, $fragment1_data ) )[5] . "-";
+        }
+
+        if ( $read2_strand eq '+' ) {    #The reverse is true.
+            $enzymes .= "_" . ( split( /\t/, $fragment2_data ) )[6] . "_" . ( split( /\t/, $fragment2_data ) )[5] . "+";
+        } else {
+            $enzymes .= "_" . ( split( /\t/, $fragment2_data ) )[5] . "_" . ( split( /\t/, $fragment2_data ) )[6] . "-";
+        }
+
+        my $digest_pattern = $linkage . "_" . $enzymes;
+        $digest_pattern =~ s/\n|\r//g;    #Remove line breaks from the string.
+
+        #Determine the combined length of the di-tag pairs and distance between them
+        my $fragment1_length = ( split( /\t/, $fragment1_data ) )[2] - ( split( /\t/, $fragment1_data ) )[1];
+        my $fragment2_length = ( split( /\t/, $fragment2_data ) )[2] - ( split( /\t/, $fragment2_data ) )[1];
+        my $ditag_length     = $fragment1_length + $fragment2_length;
+
+        $ditag_sizes{$ditag_length}++;    #Record the di-tag length distribution
+
+        #Check whther the di-tag fall within the accepted size limits of the library
+        if ($insert_size_check) {
+            if ( ( $ditag_length > $config{longest} ) or ( $ditag_length < $config{shortest} ) ) {
+                print WRONG_SIZE "$read1\n";
+                print WRONG_SIZE "$read2\n";
+                $category_counter{Wrong_size}++;
+                next;
+            }
+        }
+
+        #Count the type of output generated - only correct size putative di-tags
+        if ( exists $digest_results{$digest_pattern} ) {
+            $digest_results{$digest_pattern}++;
+        } else {
+            $digest_results{$digest_pattern} = 1;
+        }
+
+        #Print to file valid HiC pairs.
+        if (
+               $digest_pattern eq "Cis(not_adjacent_Re1)_Re2_Re1+_Re1_Re2-"
+            or $digest_pattern eq "Cis(not_adjacent_Re1)_Re2_Re1-_Re1_Re2+"
+            or $digest_pattern eq "Cis(not_adjacent_Re1)_Re2_Re1+_Re1_Re2+"
+            or $digest_pattern eq "Cis(not_adjacent_Re1)_Re2_Re1-_Re1_Re2-"
+
+            or $digest_pattern eq "Cis(not_adjacent_Re1)_Re1_Re1+_Re1_Re2-"
+            or $digest_pattern eq "Cis(not_adjacent_Re1)_Re1_Re1-_Re1_Re2+"
+            or $digest_pattern eq "Cis(not_adjacent_Re1)_Re1_Re1+_Re1_Re2+"
+            or $digest_pattern eq "Cis(not_adjacent_Re1)_Re1_Re1-_Re1_Re2-"
+
+            or $digest_pattern eq "Cis(not_adjacent_Re1)_Re2_Re1+_Re1_Re1-"
+            or $digest_pattern eq "Cis(not_adjacent_Re1)_Re2_Re1-_Re1_Re1+"
+            or $digest_pattern eq "Cis(not_adjacent_Re1)_Re2_Re1+_Re1_Re1+"
+            or $digest_pattern eq "Cis(not_adjacent_Re1)_Re2_Re1-_Re1_Re1-"
+
+            or $digest_pattern eq "Cis(not_adjacent_Re1)_Re1_Re1+_Re1_Re1-"
+            or $digest_pattern eq "Cis(not_adjacent_Re1)_Re1_Re1-_Re1_Re1+"
+            or $digest_pattern eq "Cis(not_adjacent_Re1)_Re1_Re1+_Re1_Re1+"
+            or $digest_pattern eq "Cis(not_adjacent_Re1)_Re1_Re1-_Re1_Re1-"
+
+          )
+        {
+            #Determine if these are close or far (separation >10kbp) cis pairs
+            if ( ( split( /\t/, $fragment1_data ) )[1] < ( split( /\t/, $fragment2_data ) )[1] ) {    #Is fragment 1 upstream of fragment 2, or vice versa?
+                if ( ( ( split( /\t/, $fragment2_data ) )[2] - ( split( /\t/, $fragment1_data ) )[1] - $ditag_length ) > 10000 ) {    #Determine separation distance
+                    print HIC_READS $read1 . "\tCT:Z:FAR\n";
+                    print HIC_READS $read2 . "\tCT:Z:FAR\n";
+                    $category_counter{Cis_far}++;
+                } else {
+                    print HIC_READS $read1 . "\tCT:Z:CLOSE\n";
+                    print HIC_READS $read2 . "\tCT:Z:CLOSE\n";
+                    $category_counter{Cis_close}++;
+                }
+            } else {
+                if ( ( ( split( /\t/, $fragment1_data ) )[2] - ( split( /\t/, $fragment2_data ) )[1] - $ditag_length ) > 10000 ) {    #Determine separation distance
+                    print HIC_READS $read1 . "\tCT:Z:FAR\n";
+                    print HIC_READS $read2 . "\tCT:Z:FAR\n";
+                    $category_counter{Cis_far}++;
+                } else {
+                    print HIC_READS $read1 . "\tCT:Z:CLOSE\n";
+                    print HIC_READS $read2 . "\tCT:Z:CLOSE\n";
+                    $category_counter{Cis_close}++;
+                }
+            }
+        }
+
+        #Trans-ligations
+        elsif (
+               $digest_pattern eq "Trans_Re2_Re1+_Re1_Re2-"
+            or $digest_pattern eq "Trans_Re2_Re1-_Re1_Re2+"
+            or $digest_pattern eq "Trans_Re2_Re1+_Re1_Re2+"
+            or $digest_pattern eq "Trans_Re2_Re1-_Re1_Re2-"
+
+            or $digest_pattern eq "Trans_Re1_Re1+_Re1_Re2-"
+            or $digest_pattern eq "Trans_Re1_Re1-_Re1_Re2+"
+            or $digest_pattern eq "Trans_Re1_Re1+_Re1_Re2+"
+            or $digest_pattern eq "Trans_Re1_Re1-_Re1_Re2-"
+
+            or $digest_pattern eq "Trans_Re2_Re1+_Re1_Re1-"
+            or $digest_pattern eq "Trans_Re2_Re1-_Re1_Re1+"
+            or $digest_pattern eq "Trans_Re2_Re1+_Re1_Re1+"
+            or $digest_pattern eq "Trans_Re2_Re1-_Re1_Re1-"
+
+            or $digest_pattern eq "Trans_Re1_Re1+_Re1_Re1-"
+            or $digest_pattern eq "Trans_Re1_Re1-_Re1_Re1+"
+            or $digest_pattern eq "Trans_Re1_Re1+_Re1_Re1+"
+            or $digest_pattern eq "Trans_Re1_Re1-_Re1_Re1-"
+          )
+        {
+            print HIC_READS $read1 . "\tCT:Z:TRANS\n";
+            print HIC_READS $read2 . "\tCT:Z:TRANS\n";
+            $category_counter{"Trans-ligation"}++;
+        }
+
+        #No ligation Internal Re2:
+        elsif ( $digest_pattern eq 'Same(Re1)_same(Re1-Re2)_Re2_Re2+_Re2_Re2-' or $digest_pattern eq 'Same(Re1)_same(Re1-Re2)_Re2_Re2-_Re2_Re2+' ) {
+            print INTERNAL_RE2 "$read1\n";
+            print INTERNAL_RE2 "$read2\n";
+            $category_counter{"Internal_Re2"}++;
+        }
+
+        #Re-ligation:
+        elsif ( $digest_pattern eq 'Adjacent(Re1)_Re2_Re1+_Re1_Re2-' or $digest_pattern eq 'Adjacent(Re1)_Re2_Re1-_Re1_Re2+' ) {
+            print RE_LIGATION "$read1\n";
+            print RE_LIGATION "$read2\n";
+            $category_counter{"Re-ligation"}++;
+        }
+
+        #Self-ligation:
+        elsif ( $digest_pattern eq 'Same(Re1)_different(Re1-Re2)_Re2_Re1+_Re1_Re2-' or $digest_pattern eq 'Same(Re1)_different(Re1-Re2)_Re2_Re1-_Re1_Re2+' ) {
+            print SELF_LIGATION "$read1\n";
+            print SELF_LIGATION "$read2\n";
+            $category_counter{"Self-ligation"}++;
+        }
+
+        #No Ligation (other)
+        elsif ( $digest_pattern =~ /Same\(Re1\)/ ) {
+            print NO_LIGATION "$read1\n";
+            print NO_LIGATION "$read2\n";
+            $category_counter{"No_ligation"}++;
+        }
+
+# #No ligation:
+#  elsif($digest_pattern eq  'Same(Re1)_same(Re1-Re2)_Re2_Re1+_Re2_Re1-' or $digest_pattern eq 'Same(Re1)_same(Re1-Re2)_Re2_Re1-_Re2_Re1+' or $digest_pattern eq 'Same(Re1)_same(Re1-Re2)_Re1_Re2-_Re1_Re2+' or $digest_pattern eq  'Same(Re1)_same(Re1-Re2)_Re1_Re2+_Re1_Re2-'){
+#print "$digest_pattern\n";
+# print "$digest_pattern\n";
+# $category_counter{"No_ligation"}++;
+# }
+
+        #Unclassified
+        else {
+            print UNCLASSIFIED "$read1\n";
+            print UNCLASSIFIED "$read2\n";
+            $category_counter{"Unclassified"}++;
+        }
+    }
+
+    if ( $category_counter{Invalid_format} ) {
+        warn "File $filename contained $category_counter{Invalid_format} pairs that were removed for not being in the correct SAM format\n";
+    }
+
+    #Print the results to file
+    if ( $category_counter{Total} ) {    #Only provide statisitcs if there are di-tags in the correct format
+        my $percent_no_ligation   = $category_counter{No_ligation} / $category_counter{Total} * 100;
+        my $percent_re_ligation   = $category_counter{"Re-ligation"} / $category_counter{Total} * 100;
+        my $percent_self_ligation = $category_counter{"Self-ligation"} / $category_counter{Total} * 100;
+        my $percent_internal_re2  = $category_counter{Internal_Re2} / $category_counter{Total} * 100;
+        my $percent_cis_close     = $category_counter{Cis_close} / $category_counter{Total} * 100;
+        my $percent_cis_far       = $category_counter{Cis_far} / $category_counter{Total} * 100;
+        my $percent_trans         = $category_counter{"Trans-ligation"} / $category_counter{Total} * 100;
+        my $percent_unclassified  = $category_counter{Unclassified} / $category_counter{Total} * 100;
+        my $percent_wrong_size    = $category_counter{Wrong_size} / $category_counter{Total} * 100;
+        my $percent_unmapped      = $category_counter{Unmapped} / $category_counter{Total} * 100;
+        my $valid_hic_pairs       = $category_counter{Cis_close} + $category_counter{Cis_far} + $category_counter{"Trans-ligation"};
+        my $invalid_hic_pairs =
+          $category_counter{No_ligation} +
+          $category_counter{"Re-ligation"} +
+          $category_counter{"Self-ligation"} +
+          $category_counter{Internal_Re2} +
+          $category_counter{Unclassified} +
+          $category_counter{Wrong_size} +
+          $category_counter{Unmapped};
+        my $percent_valid_hic_pairs   = $valid_hic_pairs / $category_counter{Total} * 100;
+        my $percent_invalid_hic_pairs = $invalid_hic_pairs / $category_counter{Total} * 100;
+
+        my $filename_for_summary = ( split( /\//, $filename ) )[-1];    #Removes folder extensions
+        print SUMMARY join( "\t",
+            $filename_for_summary,               $category_counter{Total},        $valid_hic_pairs,               $category_counter{Cis_close},     $category_counter{Cis_far},
+            $category_counter{"Trans-ligation"}, $invalid_hic_pairs,              $category_counter{No_ligation}, $category_counter{"Re-ligation"}, $category_counter{"Self-ligation"},
+            $category_counter{Internal_Re2},     $category_counter{Unclassified}, $category_counter{Wrong_size},  $category_counter{Unmapped} );
+        print SUMMARY "\n";
+
+        #Create a line graph of di-tag length vs frequency
+        my %edited_ditag_sizes;
+        %edited_ditag_sizes = edit_ditag_sizes( \%ditag_sizes );        #Sort Di-tags in the size range of 1-2000 and aggregate in 10s
+        unless ( $config{r} eq '0' ) {
+            createFreqDistPlot( $filename, \%edited_ditag_sizes );
+        }
+
+        if ($hicup_executed) {    #Write the ditag length to a file to be read by hicup for the HTML report (when this script is executed by the hicup master script)
+
+# open(DITAG_LENGTHS, '>', $inOutFilenames{$filename}.'.ditag_lengths.'.$config{datestamp}.".temp") or die "Could not write to '$config{outdir}.$filename."."ditag_lengths."."$config{datestamp}.temp : $!";
+# print DITAG_LENGTHS "Bin\tFrequency\n";
+            my $ditagLength_HTML_Report = ( fileNamer( $filename, \%config, 'filter', 0, 0, 0, 1, 0 ) )[1];
+            open( DITAG_LENGTHS, '>', $ditagLength_HTML_Report ) or die "Could not write to '$ditagLength_HTML_Report' : $!";
+            print DITAG_LENGTHS "Bin\tFrequency\n";
+            foreach my $bin ( sort ( keys %edited_ditag_sizes ) ) {
+                print DITAG_LENGTHS "$bin\t$edited_ditag_sizes{$bin}\n";
+            }
+            close DITAG_LENGTHS or warn "Could not close filehandle on '$ditagLength_HTML_Report' : $!";
+        }
+
+    } else {
+        warn "There are no di-tags in the correct format in file $filename.\n";
+    }
+
+    close HIC_READS or warn "Filehandle on '$config{outdir} . $outputfilename_base' did not close correctly, either an error or file contains no valid reads (check summary report) : $!";
+    close UNMAPPED;
+    close PAIRED_READS or die "Could not close filehandle on '$filename' : $!";
+    if ($insert_size_check) {
+        close WRONG_SIZE;
+    }
+    close NO_LIGATION;
+    close INTERNAL_RE2;
+    close SELF_LIGATION;
+    close RE_LIGATION;
+    close UNCLASSIFIED;
+    close INVALID;
+
+}
+
+########################################################################
+#Subroutine "sonicate_hic":
+#analyses the data assuming a sonication Hi-C protocol has been followed
+sub sonicate_hic {
+
+    my $filename = $_[0];
+
+    warn "Filtering $filename\n" unless $config{quiet};
+
+    #Create outputfiles
+    #my $outputfilename_base = $filename;
+
+    my $outputfilename_base = fileNamer( $filename, \%config, 'filter' );
+    my $write_command;
+    my @output_files;
+
+    #$outputfilename_base =~ s/^.+\///;    #Remove folder references
+
+    if ( $config{samtools} and $config{zip} ) {
+
+        #$file_extension = '.bam';    #BAM format
+        $write_command = '| samtools view -bSh 2>/dev/null - >';
+    } elsif ( $config{zip} ) {
+
+        #$file_extension = '.sam.gz';    #SAM format then compressed
+        $write_command = "| gzip -c - >";
+    } else {
+
+        #$file_extension = '.sam';    #SAM format
+        $write_command = ">";
+    }
+
+    #Create outputfiles
+    open( HIC_READS, $write_command . $config{outdir} . $outputfilename_base ) or die $!;
+    push( @output_files, $config{outdir} . $outputfilename_base );
+
+    #For the reject files, determine the names of the files here, using the output from the fileNamer
+    #subroutine as a base
+    #Determine the file extension of the files
+    $outputfilename_base =~ s/\.filt\.(bam|sam|sam\.gz)$//;
+
+    my $file_extension = $1;
+    $file_extension = '.filter.' . $file_extension;
+
+    #$outputfilename_base =~ s/\.filt\.(bam|sam|sam\.gz)$//;
+
+    if ($insert_size_check) {
+        open( WRONG_SIZE, $write_command . $rejdir . '/' . $outputfilename_base . "_wrong_size" . $file_extension ) or die $!;
+        push( @output_files, $rejdir . $outputfilename_base . "_wrong_size" . $file_extension );
+    }
+
+    open( INVALID, $write_command . $rejdir . '/' . $outputfilename_base . "_invalid" . $file_extension ) or die $!;
+    push( @output_files, $rejdir . '/' . $outputfilename_base . "_invalid" . $file_extension );
+
+    open( SAME_CIRCULARISED, $write_command . $rejdir . '/' . $outputfilename_base . "_same_circularised" . $file_extension ) or die $!;
+    push( @output_files, $rejdir . '/' . $outputfilename_base . "_same_circularised" . $file_extension );
+
+    open( SAME_DANGLING_ENDS, $write_command . $rejdir . '/' . $outputfilename_base . "_same_dangling_ends" . $file_extension ) or die $!;
+    push( @output_files, $rejdir . '/' . $outputfilename_base . "_same_dangling_ends" . $file_extension );
+
+    open( SAME_INTERNAL, $write_command . $rejdir . '/' . $outputfilename_base . "_same_internal" . $file_extension ) or die $!;
+    push( @output_files, $rejdir . '/' . $outputfilename_base . "_same_internal" . $file_extension );
+
+    open( RE_LIGATION, $write_command . $rejdir . '/' . $outputfilename_base . "_re_ligation" . $file_extension ) or die $!;
+    push( @output_files, $rejdir . '/' . $outputfilename_base . "_re_ligation" . $file_extension );
+
+    open( CONTIGUOUS, $write_command . $rejdir . '/' . $outputfilename_base . "_contiguous" . $file_extension ) or die $!;
+    push( @output_files, $rejdir . '/' . $outputfilename_base . "_contiguous" . $file_extension );
+
+    #Create the category counter
+    my %category_counter = (
+        'wrong_size'         => 0,
+        'same_circularised'  => 0,
+        'same_dangling_ends' => 0,
+        'same_internal'      => 0,
+        're_ligation'        => 0,
+        'contiguous'         => 0,
+        'cis_close'          => 0,
+        'cis_far'            => 0,
+        'trans'              => 0,
+        'total_valid'        => 0,
+        'invalid_format'     => 0
+    );
+
+    #Open pair file
+    if ( $filename =~ /\.gz$/ ) {
+        open( PAIRED_READS, "zcat $filename |" ) or die "Couldn't read $filename : $!";
+    } elsif ( $filename =~ /\.bam$/ ) {
+        if ( $config{samtools} ) {
+            open( PAIRED_READS, "$config{samtools} view -h $filename |" ) or die "Couldn't read $filename: $!";
+        } else {
+            die "Cannot process BAM files - either install SAMtools to process '$filename' or only provide SAM files\n";
+        }
+    } else {
+        open( PAIRED_READS, $filename ) or die "Could not read $filename: $!";
+    }
+
+    my $in_header = 1;    #Flag indicating if in the header region
+
+    while (<PAIRED_READS>) {
+        if (/^@/) {
+
+            #Print SAM header lines so conversion to BAM is possible
+            print HIC_READS $_;
+            if ($insert_size_check) {
+                print WRONG_SIZE $_;
+            }
+            print INVALID $_;
+            print SAME_CIRCULARISED $_;
+            print SAME_INTERNAL $_;
+            print SAME_DANGLING_ENDS $_;
+            print RE_LIGATION $_;
+            print CONTIGUOUS $_;
+            next;
+        } else {
+            if ($in_header) {
+                my $sam_header_line = "\@PG\tID:HiCUP Filter\tVN:" . "$hicup_module::VERSION\t";
+                $sam_header_line .= "DS:\"Max insert " . $config{longest} . ' Min insert ' . $config{shortest} . ' Digest file ' . "$config{digest}\"\n";
+                print HIC_READS $sam_header_line;
+                if ($insert_size_check) {
+                    print WRONG_SIZE $sam_header_line;
+                }
+                print INVALID $sam_header_line;
+                print SAME_CIRCULARISED $sam_header_line;
+                print SAME_INTERNAL $sam_header_line;
+                print SAME_DANGLING_ENDS $sam_header_line;
+                print RE_LIGATION $sam_header_line;
+                print CONTIGUOUS $sam_header_line;
+                $in_header = 0;
+            }
+        }
+
+        my $read1 = $_;
+        my $read2 = scalar <PAIRED_READS>;
+
+        #Check the reads are in the valid format
+        unless ( $read1 =~ /^.+\t\d+\t\S+\t\d+\t\d+\t\S+\t.+\t\d+\t\d+\t[ATCGN]+\t.+$/ and $read2 =~ /^.+\t\d+\t\S+\t\d+\t\d+\t\S+\t.+\t\d+\t\d+\t[ATCGN]+\t.+$/ ) {
+            print INVALID $read1;
+            print INVALID $read2;
+            $category_counter{invalid_format}++;
+            next;
+        }
+
+        $category_counter{total_valid}++;
+
+        #Check if reads are on the same chromosome.
+        my $read1_chromosome_name = ( split( /\t/, $read1 ) )[2];
+        my $read2_chromosome_name = ( split( /\t/, $read2 ) )[2];
+        my $read1_strand;
+        my $read2_strand;
+
+        if ( ( ( split( /\t/, $read1 ) )[1] ) & 0x10 ) {    #Analyse the SAM bitwise flag to determine which strand
+            $read1_strand = '-';
+        } else {
+            $read1_strand = '+';
+        }
+        if ( ( ( split( /\t/, $read2 ) )[1] ) & 0x10 ) {    #Analyse the SAM bitwise flag to determine which strand
+            $read2_strand = '-';
+        } else {
+            $read2_strand = '+';
+        }
+
+        my $read1_pos = ( ( split( /\t/, $read1 ) )[3] );
+        my $read2_pos = ( ( split( /\t/, $read2 ) )[3] );
+        my $read1_pos_ten_kb_region = ceil( $read1_pos / 10000 );
+        my $read2_pos_ten_kb_region = ceil( $read2_pos / 10000 );
+
+        #Using the terminal ends of a di-tag to position a read on the digested genome could be problematic because
+        #a restiction enzyme may not cut in the same position on both strands (i.e. creates sticky ends). Filling-in
+        #and truncating reads at the Hi-C junction makes this situation even more complex.
+        #To overcome this problem simply the script uses the position 10 bp upstream of the start of each read when
+        #assigning reads to a fragment in the digested genome.
+        if ( length( ( ( split( /\t/, $read1 ) )[9] ) ) > 10 ) {    #Only perform when sure there is reference genome upstream
+            $read1_pos += 10;                                       #For both '+' and '-' strands, strand not important here
+        }
+        if ( length( ( ( split( /\t/, $read2 ) )[9] ) ) > 10 ) {    #Only perform when sure there is reference genome upstream
+            $read2_pos += 10;                                       #For both '+' and '-' strands, strand not important here
+        }
+
+        #Determine if read 2 is found in read 1.
+        my $lookup_start_site1;
+        my $lookup_start_site2;
+        my $lookup_end_site1;
+        my $lookup_end_site2;
+        my $fragment_number1;
+        my $fragment_number2;
+
+        foreach ( keys %{ $digest_fragments{"$read1_chromosome_name\t$read1_pos_ten_kb_region"} } ) {
+            $lookup_start_site1 = $_;                               #Assign value here to ensure $lookup_start_site1 is initialized outside the foreach loop
+            $lookup_end_site1 = $digest_fragments{"$read1_chromosome_name\t$read1_pos_ten_kb_region"}{$lookup_start_site1};
+            $fragment_number1 = ( split( /\t/, $lookup_end_site1 ) )[1];
+            $lookup_end_site1 = ( split( /\t/, $lookup_end_site1 ) )[0];                                                      #$lookup_end_site is the value before the tab
+
+            #Check whether read1 is on this fragment
+            if ( ( $lookup_start_site1 <= $read1_pos ) and ( $lookup_end_site1 >= $read1_pos ) ) {
+                last;
+            }
+        }
+
+        foreach ( keys %{ $digest_fragments{"$read2_chromosome_name\t$read2_pos_ten_kb_region"} } ) {
+            $lookup_start_site2 = $_;    #Assign value here to ensure $lookup_start_site2 is intitialized outside the foreach loop
+            $lookup_end_site2 = $digest_fragments{"$read2_chromosome_name\t$read2_pos_ten_kb_region"}{$lookup_start_site2};
+            $fragment_number2 = ( split( /\t/, $lookup_end_site2 ) )[1];
+            $lookup_end_site2 = ( split( /\t/, $lookup_end_site2 ) )[0];                                                      #$lookup_end_site is the value before the tab
+
+            #Check whether read2 is on this fragment
+            if ( ( $lookup_start_site2 <= $read2_pos ) and ( $lookup_end_site2 >= $read2_pos ) ) {
+                last;
+            }
+        }
+
+        #Check that all reads are accounted for by the genome digest file
+        unless ($fragment_number1) {
+            die
+"Terminating. The following alignment could not be positioned in the genome digest file:\n$read1\nPlease ensure hicup_digester and hicup_filter used exactly the same reference genome.\n";
+        }
+        unless ($fragment_number2) {
+            die
+"Terminating. The following alignment could not be positioned in the genome digest file:\n$read2\nPlease ensure hicup_digester and hicup_filter used exactly the same reference genome.\n";
+        }
+
+        #$max_possible_insert_size used for determining distance of separation between fragments
+        my $max_possible_insert_size = ( $lookup_end_site1 - $lookup_start_site1 ) + ( $lookup_end_site2 - $lookup_start_site2 );
+
+        #Is the insert the correct size?
+        my $ditag_size;
+        my $tag1_size;
+        my $tag2_size;
+        my $correct_size = 1;    #Flag to check insert is within the allowable range
+
+        if ( $read1_strand eq '+' ) {
+            $tag1_size = abs( $read1_pos - $lookup_end_site1 ) + 10;    #Add 10bps to correct for modification above
+        } else {
+            $tag1_size = abs( $read1_pos + length( ( ( split( /\t/, $read1 ) )[9] ) ) - $lookup_start_site1 ) - 10;    #Remove 10bps to correct for modification above
+        }
+
+        if ( $read2_strand eq '+' ) {
+            $tag2_size = abs( $read2_pos - $lookup_end_site2 ) + 10;                                                   #Add 10bps to correct for modification above
+        } else {
+            $tag2_size = abs( $read2_pos + length( ( ( split( /\t/, $read2 ) )[9] ) ) - $lookup_start_site2 ) - 10;    #Remove 10bps to correct for modification above
+        }
+
+        $ditag_size = $tag1_size + $tag2_size;
+        $ditag_sizes{$ditag_size}++;                                                                                   #Record di-tag size distribution
+
+        if ($insert_size_check) {
+            if ( ( $ditag_size < $config{shortest} ) or ( $ditag_size > $config{longest} ) ) {
+                $correct_size = 0;
+            }
+        }
+
+        #Identify trans di-tags and move on to next paired reads
+        if ( $read1_chromosome_name ne $read2_chromosome_name ) {
+            if ($correct_size) {
+                chomp $read1;
+                chomp $read2;
+                print HIC_READS $read1 . "\tCT:Z:TRANS\n";    #Includes SAM format tag for use by hicup_deduplicator
+                print HIC_READS $read2 . "\tCT:Z:TRANS\n";
+                $category_counter{trans}++;
+                next;
+            } else {
+                print WRONG_SIZE $read1;
+                print WRONG_SIZE $read2;
+                $category_counter{wrong_size}++;
+                next;
+            }
+        }
+
+        if ( $fragment_number1 == $fragment_number2 ) {
+
+            #Reads will point away from each other in circularised fragments
+            if ( $read1_pos < $read2_pos ) {    #Read 1 before read 2
+                if ( ( $read1_strand eq '-' ) and ( $read2_strand eq '+' ) ) {
+                    print SAME_CIRCULARISED $read1;
+                    print SAME_CIRCULARISED $read2;
+                    $category_counter{same_circularised}++;
+                    next;
+                }
+            } elsif ( $read2_pos < $read1_pos ) {    #Read 2 before read 1
+                if ( ( $read1_strand eq '+' ) and ( $read2_strand eq '-' ) ) {
+                    print SAME_CIRCULARISED $read1;
+                    print SAME_CIRCULARISED $read2;
+                    $category_counter{same_circularised}++;
+                    next;
+                }
+            }
+
+            #Di-tags not classified as 'Same_circularised' will either be 'Same_internal' or 'Same_dangling_ends'
+            #Is the 5' end of the read (not the alignment) near (defined as within 6bp) of the of a restriction cut site?
+            my $five_prime_end_of_read1;
+            my $five_prime_end_of_read2;
+
+            if ( $read1_strand eq '+' ) {
+                $five_prime_end_of_read1 = $read1_pos - 10;    #Subtract 10 from position, since 10 was added above to ignore 'problematic' overhang regions
+            } else {
+                $five_prime_end_of_read1 = $read1_pos - 10 + length( ( split( /\t/, $read1 ) )[9] ) - 1;
+            }
+
+            if ( $read2_strand eq '+' ) {
+                $five_prime_end_of_read2 = $read2_pos - 10;
+            } else {
+                $five_prime_end_of_read2 = $read2_pos - 10 + length( ( split( /\t/, $read2 ) )[9] ) - 1;
+            }
+
+            if (   ( abs( $five_prime_end_of_read1 - $lookup_start_site1 ) < 7 )
+                or ( abs( $five_prime_end_of_read1 - $lookup_end_site1 ) < 7 )
+                or ( abs( $five_prime_end_of_read2 - $lookup_start_site1 ) < 7 )
+                or ( abs( $five_prime_end_of_read2 - $lookup_end_site1 ) < 7 ) )
+            {    #Since both reads map to the same fragment, only need lookup start/end sites 1 (i.e. not 2 as well)
+                print SAME_DANGLING_ENDS $read1;
+                print SAME_DANGLING_ENDS $read2;
+                $category_counter{same_dangling_ends}++;
+            } else {
+                print SAME_INTERNAL $read1;
+                print SAME_INTERNAL $read2;
+                $category_counter{same_internal}++;
+            }
+
+        } elsif ( ( abs( $fragment_number1 - $fragment_number2 ) == 1 ) and ( $read1_strand ne $read2_strand ) ) {    #Adjacent fragments in same orientation (thus read in opposite orientation)
+            print RE_LIGATION $read1;
+            print RE_LIGATION $read2;
+            $category_counter{re_ligation}++;
+        } else {
+
+            if ( ($insert_size_check) and ( $read1_strand ne $read2_strand ) ) {    #Is this a potential contiguous sequence that spans several restriction sites and passes size selection?
+                my $contig_size;
+                if ( ( $read1_strand eq '+' ) and ( $read2_pos > $read1_pos ) ) {    #Reads opposite orientation and reading into the gap between
+                    $contig_size = $read2_pos - $read1_pos;
+                }
+                if ( ( $read2_strand eq '+' ) and ( $read1_pos > $read2_pos ) ) {    #Reads opposite orientation and reading into the gap between
+                    $contig_size = $read1_pos - $read2_pos;
+                }
+
+                if ($contig_size) {
+                    if ( ( $contig_size > $config{shortest} ) and ( $contig_size < $config{longest} ) ) {
+                        print CONTIGUOUS $read1;
+                        print CONTIGUOUS $read2;
+                        $category_counter{contiguous}++;
+                        next;
+                    }
+                }
+            }
+
+            #Determine if these are close or far (separation >10kbp) cis pairs
+            if ( $read1_pos < $read2_pos ) {    #Is fragment 1 upstream of fragment 2, or vice versa?
+                if ( ( $lookup_end_site2 - $lookup_start_site1 - $max_possible_insert_size ) > 10000 ) {    #Determine separation distance
+                    if ($correct_size) {
+                        chomp $read1;
+                        chomp $read2;
+                        print HIC_READS $read1 . "\tCT:Z:FAR\n";
+                        print HIC_READS $read2 . "\tCT:Z:FAR\n";
+                        $category_counter{cis_far}++;
+                    } else {
+                        print WRONG_SIZE $read1;
+                        print WRONG_SIZE $read2;
+                        $category_counter{wrong_size}++;
+                    }
+                } else {
+                    if ($correct_size) {
+                        chomp $read1;
+                        chomp $read2;
+                        print HIC_READS $read1 . "\tCT:Z:CLOSE\n";
+                        print HIC_READS $read2 . "\tCT:Z:CLOSE\n";
+                        $category_counter{cis_close}++;
+                    } else {
+                        print WRONG_SIZE $read1;
+                        print WRONG_SIZE $read2;
+                        $category_counter{wrong_size}++;
+                    }
+                }
+            } else {
+                if ( ( $lookup_end_site1 - $lookup_start_site2 - $max_possible_insert_size ) > 10000 ) {    #Determine separation distance
+                    if ($correct_size) {
+                        chomp $read1;
+                        chomp $read2;
+                        print HIC_READS $read1 . "\tCT:Z:FAR\n";
+                        print HIC_READS $read2 . "\tCT:Z:FAR\n";
+                        $category_counter{cis_far}++;
+                    } else {
+                        print WRONG_SIZE $read1;
+                        print WRONG_SIZE $read2;
+                        $category_counter{wrong_size}++;
+                    }
+                } else {
+                    if ($correct_size) {
+                        chomp $read1;
+                        chomp $read2;
+                        print HIC_READS $read1 . "\tCT:Z:CLOSE\n";
+                        print HIC_READS $read2 . "\tCT:Z:CLOSE\n";
+                        $category_counter{cis_close}++;
+                    } else {
+                        print WRONG_SIZE $read1;
+                        print WRONG_SIZE $read2;
+                        $category_counter{wrong_size}++;
+                    }
+                }
+            }
+        }
+    }
+
+    if ( $category_counter{invalid_format} ) {
+        warn "File $filename contained $category_counter{invalid_format} pairs that were removed for not being in the correct SAM format\n";
+    }
+
+    if ( $category_counter{total_valid} ) {    #Only provide statisitcs if there are di-tags in the correct format
+                                               #Note: $category_counter{total_valid} are pairs in correct SAM format, NOT valid Hi-C pairs
+        my $valid_hic_pairs = $category_counter{cis_close} + $category_counter{cis_far} + $category_counter{trans};
+        my $invalid_hic_pairs =
+          $category_counter{wrong_size} +
+          $category_counter{same_circularised} +
+          $category_counter{same_dangling_ends} +
+          $category_counter{same_internal} +
+          $category_counter{re_ligation} +
+          $category_counter{contiguous};
+        my $percent_cis_close          = $category_counter{cis_close} / $category_counter{total_valid} * 100;
+        my $percent_cis_far            = $category_counter{cis_far} / $category_counter{total_valid} * 100;
+        my $percent_trans              = $category_counter{trans} / $category_counter{total_valid} * 100;
+        my $percent_wrong_size         = $category_counter{wrong_size} / $category_counter{total_valid} * 100;
+        my $percent_contiguous         = $category_counter{contiguous} / $category_counter{total_valid} * 100;
+        my $percent_same_circularised  = $category_counter{same_circularised} / $category_counter{total_valid} * 100;
+        my $percent_same_dangling_ends = $category_counter{same_dangling_ends} / $category_counter{total_valid} * 100;
+        my $percent_same_internal      = $category_counter{same_internal} / $category_counter{total_valid} * 100;
+        my $percent_re_ligation        = $category_counter{re_ligation} / $category_counter{total_valid} * 100;
+        my $percent_valid_hic_pairs    = $valid_hic_pairs / $category_counter{total_valid} * 100;
+        my $percent_invalid_hic_pairs  = $invalid_hic_pairs / $category_counter{total_valid} * 100;
+
+        #Print the results to file
+        my $filename_for_summary = ( split( /\//, $filename ) )[-1];    #Removes folder extensions
+        print SUMMARY "$filename_for_summary\t$category_counter{total_valid}\t$valid_hic_pairs\t";
+        print SUMMARY "$category_counter{cis_close}\t";
+        print SUMMARY "$category_counter{cis_far}\t";
+        print SUMMARY "$category_counter{trans}\t";
+        print SUMMARY "$invalid_hic_pairs\t";
+        print SUMMARY "$category_counter{same_circularised}\t";
+        print SUMMARY "$category_counter{same_dangling_ends}\t";
+        print SUMMARY "$category_counter{same_internal}\t";
+        print SUMMARY "$category_counter{re_ligation}\t";
+        print SUMMARY "$category_counter{contiguous}\t";
+        print SUMMARY "$category_counter{wrong_size}\n";
+
+        #Create a line graph of di-tag length vs frequency
+        my %edited_ditag_sizes;
+        %edited_ditag_sizes = edit_ditag_sizes( \%ditag_sizes );    #Sort Di-tags in the size range of 1-2000 and aggregate in 10s
+        unless ( $config{r} eq '0' ) {
+            createFreqDistPlot( $filename, \%edited_ditag_sizes );
+        }
+
+        if ($hicup_executed) {                                      #Write the ditag length to a file to be read by hicup for the HTML report (when this script is executed by the hicup master script)
+
+# open(DITAG_LENGTHS, '>', $inOutFilenames{$filename}.'.ditag_lengths.'.$config{datestamp}.".temp") or die "Could not write to '$config{outdir}.$filename."."ditag_lengths."."$config{datestamp}.temp : $!";
+# print DITAG_LENGTHS "Bin\tFrequency\n";
+            my $ditagLength_HTML_Report = ( fileNamer( $filename, \%config, 'filter', 0, 0, 0, 1, 0 ) )[1];
+            $ditagLength_HTML_Report = $config{outdir} . $ditagLength_HTML_Report;
+			open( DITAG_LENGTHS, '>', $ditagLength_HTML_Report ) or die "Could not write to '$ditagLength_HTML_Report' : $!";
+            print DITAG_LENGTHS "Bin\tFrequency\n";
+            foreach my $bin ( sort ( keys %edited_ditag_sizes ) ) {
+                print DITAG_LENGTHS "$bin\t$edited_ditag_sizes{$bin}\n";
+            }
+            close DITAG_LENGTHS or warn "Could not close filehandle on '$ditagLength_HTML_Report' : $!";
+        }
+    } else {
+        warn "There are no di-tags in the correct format in file $filename.\n";
+    }
+
+    close PAIRED_READS or die "Could not close filehandle on '$filename' : $!";
+	close HIC_READS or warn "Filehandle on '$config{outdir} . $outputfilename_base' did not close correctly, either an error or file contains no valid reads (check summary report) : $!";
+    close WRONG_SIZE;
+    close INVALID;
+    close SAME_CIRCULARISED;
+    close SAME_DANGLING_ENDS;
+    close SAME_INTERNAL;
+    close RE_LIGATION;
+    close CONTIGUOUS;
+}
+
+##############################
+#Subroutine "edit_ditag_size":
+#Processes the ditag_sizes hash to edit for size and aggregates the data in 10s
+sub edit_ditag_sizes {
+
+    my $hash_ref = $_[0];
+    my %temp_hash;
+    my %edited_hash;
+
+    #Edit for size
+    foreach my $key ( keys %{$hash_ref} ) {
+        if ( $key < 1501 ) {
+            $temp_hash{$key} = ${$hash_ref}{$key};
+        }
+    }
+
+    # return %temp_hash;
+    #Aggregate data
+    foreach my $key ( keys %temp_hash ) {
+        my $value = $key / 10;
+        $value = floor($value);
+        $value = $value * 10;
+        $edited_hash{$value} += $temp_hash{$key};
+    }
+    return %edited_hash;
+}
+
+##############################
+#Subroutine "createFreqDistPlot":
+#Generates the temporary data file processed by R to generate the
+#di-tag length / distribution plot
+sub createFreqDistPlot {
+
+    my $filename          = $_[0];
+    my $ditagSizesHashRef = $_[1];
+
+    my %edited_ditag_sizes;
+    %edited_ditag_sizes = edit_ditag_sizes($ditagSizesHashRef);    #Sort Di-tags in the size range of 1-2000 and aggregate in 10s
+
+    my $outfile = ( fileNamer( $filename, \%config, 'filter', 0, 0, 0, 1, 0 ) )[0];
+	$outfile = $config{outdir}.$outfile;
+
+    open( DISTRIBUTION, '>', $outfile ) or die "Could not write to '$outfile' : $!";
+    foreach my $size ( sort { $a <=> $b } keys %edited_ditag_sizes ) {
+        print DISTRIBUTION "$size\t$edited_ditag_sizes{$size}\n";
+    }
+    close DISTRIBUTION or die "Could not close filehandle on '$outfile' : $!";
+
+    my $command = $config{r} . 'script ' . "$Bin/r_scripts/hicup_filter_ditag_length_summary.r $config{outdir} $outfile";
+    
+    if(-s $outfile){    #Check file not empty
+        !system("$command") or warn "Could not produce hicup_filter summary distribution line graph: $command: $!";
+    }else{
+        warn "Could not produce hicup_filter summary distribution line graph since '$outfile' contains no data\n";
+    }
+    unlink("$outfile")  or warn "Could not delete '$outfile' : $!";
+}
+
+#####################
+#Subroutine "reaper":
+#reaps dead child processes
+sub reaper {
+
+    #Don't change $! and $? outside handler
+    local ( $!, $? );
+    my $pid = waitpid( -1, WNOHANG );
+    return if $pid == -1;
+    unless ( defined $children{$pid} ) {
+        return;
+    } else {
+        my $exit_value = $? >> 8;
+        if ($exit_value) {
+            $terminate = 1;
+        }
+        delete $children{$pid};
+    }
+}
+
+__DATA__
+
+HiCUP homepage: www.bioinformatics.babraham.ac.uk/projects/hicup
+
+The hicup_filter script classifies read pairs, identifying valid Hi-C di-tags 
+
+SYNOPSIS
+
+hicup_filter [OPTIONS] -config [CONFIGURATION FILE]…
+hicup_filter [OPTIONS] [hicup_mapper output file]
+
+FUNCTION
+A substantial number of read pairs will represent Hi-C artefacts and not the
+three-dimensional conformation of the genome. HiCUP Filter categorises and
+removes such read pairs.
+
+Parameters may be passed to HiCUP Filter using a configuration file and/or 
+via the command line (thereby overriding settings specified in the 
+configuration file).
+
+OPTIONS
+
+--config       Specify the optional configuration file
+--digest       Specify the genome digest file (created by hicup_digester)
+--help         Print program help and exit
+--longest      Maximum allowable insert size (bps)
+--outdir       Directory to write output files
+--quiet        Suppress all progress reports
+--shortest     Minimum allowable insert size (bps)
+--threads      Specify the number of threads, allowing simultaneous processing 
+               of multiple files
+--version      Print the program version and exit
+--zip          Compress final output files using gzip, or if SAMtools is 
+               installed, to BAM format
+
+Full instructions on running the pipeline can be found at:
+www.bioinformatics.babraham.ac.uk/projects/hicup
+
+Steven Wingett, Babraham Institute, Cambridge, UK (steven.wingett@babraham.ac.uk)
