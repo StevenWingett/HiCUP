@@ -270,7 +270,10 @@ sub check_parameters {
 
     #Split re1 into re1 and rex if two Hi-C (not re2) restriction enzymes specified
     if($config{re1} =~ /:/){
-        ($config{re1}, $config{rex}) = split( /:/, $config{re1} );
+        my @enzymeArray = split( /:/, $config{re1} );
+        $config{re1} = shift @enzymeArray;
+        @{$config{rex}} = @enzymeArray;
+        #($config{re1}, $config{rex}) = split( /:/, $config{re1} );
     }
 
 
@@ -294,8 +297,8 @@ sub check_parameters {
 
     foreach my $re ( 're1', 're2', 'rex' ) {       #Check RE are in correct format
         if ( $config{$re} ne 'None' ) {
-            unless ( $config{$re} =~ /^[ACGT\^]+$/ ) {
-                warn "Restriction enzyme: '$config{$re}' should only contain the characters: 'A','G','C','T' or '^'\n";
+            unless ( $config{$re} =~ /^[ACGTN\^]+$/ ) {
+                warn "Restriction enzyme: '$config{$re}' should only contain the characters: 'A','G','C','T', 'N' or '^'\n";
                 $parameters_ok = 0;
             }
 
