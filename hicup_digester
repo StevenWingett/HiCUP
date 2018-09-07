@@ -36,7 +36,7 @@ use Data::Dumper;
 #Option variables
 my %config = (
     config   => '',
-    example => '',
+    example  => '',
     genome   => '',
     help     => '',
     outdir   => '',
@@ -57,7 +57,7 @@ my $config_result = GetOptions(
     "re2=s"    => \$config{re2},
     "rex=s"    => \$config{rex},
     "config=s" => \$config{config},
-    "example" => \$config{example},
+    "example"  => \$config{example},
     "genome=s" => \$config{genome},
     "help"     => \$config{help},
     "outdir=s" => \$config{outdir},
@@ -125,11 +125,14 @@ my $re1_cut_remainder = length( $config{re1} ) - pos( $config{re1} );
 $config{re1} =~ s/\^//;
 
 # First restriction digestion - with additonal enzyme
-my $rex_cut_remainder;
+my %rex_cut_remainder;
 if ( $config{rex} ne 'None' ) {
-    $config{rex} =~ /\^/g;
-    $rex_cut_remainder = length( $config{rex} ) - pos( $config{rex} );
-    $config{rex} =~ s/\^//;
+    foreach my $rex (@{$config{rex}}) {
+        $rex =~ /\^/g;
+        my $current_rex_cut_remainder = length( $rex ) - pos( $rex );
+        $rex =~ s/\^//;
+        $rex_cut_remainder{$rex} = $current_rex_cut_remainder
+    }
 }
 
 
@@ -150,11 +153,17 @@ if ( $config{zip} ) {
 }
 
 if ( $config{rex} ne 'None' ) {
+    #Prepare the "rex_name [rex_with_caret]" string
+    my $rexString = "";
+    for (my $i = 0; $i < scalar(@{$config{rex}}); $i++) {
+        $rexString .= "$config{rex_name}->[$i] \[$config{rex_with_caret}\]->i ";
+    }
+    $rexString =~ s/ $//;
     if ( $config{re2} ) {
-        print OUT "Genome:$config{genome}\tRestriction_Enzyme1:$config{re1_name} \[$config{re1_with_caret}\] $config{rex_name} \[$config{rex_with_caret}\]\tRestriction_Enzyme2:$config{re2_name} \t[$config{re2_with_caret}\]\tHicup Digester version $hicup_module::VERSION\n";    #Use by hicup_filter to determine whether double digest or sonication protocol
+        print OUT "Genome:$config{genome}\tRestriction_Enzyme1:$config{re1_name} \[$config{re1_with_caret}\] $rexString\tRestriction_Enzyme2:$config{re2_name} \t[$config{re2_with_caret}\]\tHicup Digester version $hicup_module::VERSION\n";    #Use by hicup_filter to determine whether double digest or sonication protocol
         print OUT "Chromosome\tFragment_Start_Position\tFragment_End_Position\tFragment_Number\tRE1_Fragment_Number\t5'_Restriction_Site\t3'_Restriction_Site\n";
     } else {
-        print OUT "Genome:$config{genome}\tRestriction_Enzyme1:$config{re1_name} \[$config{re1_with_caret}\] $config{rex_name} \[$config{rex_with_caret}\]\tRestriction_Enzyme2:$config{re2_name}\tHicup Digester version $hicup_module::VERSION\n";                                 #Use by hicup_filter to determine whether double digest or sonication protocol
+        print OUT "Genome:$config{genome}\tRestriction_Enzyme1:$config{re1_name} \[$config{re1_with_caret}\] $rexString\tRestriction_Enzyme2:$config{re2_name}\tHicup Digester version $hicup_module::VERSION\n";                                 #Use by hicup_filter to determine whether double digest or sonication protocol
         print OUT "Chromosome\tFragment_Start_Position\tFragment_End_Position\tFragment_Number\tRE1_Fragment_Number\t5'_Restriction_Site\t3'_Restriction_Site\n";
     }
 } else {
@@ -180,7 +189,7 @@ foreach my $filename (@filenames) {
     } else {
         open( IN, $filename ) or die "Can't read filename: $!";
     }
-	
+
     print "Digesting '$filename'\n" unless $config{quiet};
 
     $sequence = '';
@@ -193,16 +202,16 @@ foreach my $filename (@filenames) {
 
         $line_count++;
 
-        if($line_count == 1){    #Check first line is a FASTA header line
-       		unless($line =~ /^\>(\S+).*$/){
-        		die "File '$filename' is not in FASTA format at line:\n$line\nFirst line of a FASTA file should give the chromosome name\nFor more details on FASTA format go to:\nhttp://en.wikipedia.org/wiki/FASTA_format\n";
-        	}
+        if ($line_count == 1) {    #Check first line is a FASTA header line
+            unless($line =~ /^\>(\S+).*$/){
+                die "File '$filename' is not in FASTA format at line:\n$line\nFirst line of a FASTA file should give the chromosome name\nFor more details on FASTA format go to:\nhttp://en.wikipedia.org/wiki/FASTA_format\n";
+            }
         }
 
         if ( $line =~ /^\>/ ) {    #Process FASTA header to determine chromosome
-        	unless($line =~ /^\>(\S+).*$/){
-        		die "File '$filename' is not in FASTA format at line:\n$line\nA chromosome name is reqired immediately after '>' (blank spaces are not allowed)\nFor more details on FASTA format go to:\nhttp://en.wikipedia.org/wiki/FASTA_format\n";
-        	}
+            unless($line =~ /^\>(\S+).*$/){
+                die "File '$filename' is not in FASTA format at line:\n$line\nA chromosome name is reqired immediately after '>' (blank spaces are not allowed)\nFor more details on FASTA format go to:\nhttp://en.wikipedia.org/wiki/FASTA_format\n";
+            }
 
             if ( $chromosomes_in_file > 0 ) {    #More than 1 c'some in file - process previous c'some now
                 digest();
@@ -268,20 +277,33 @@ sub check_parameters {
         $parameters_ok = 0;
     }
 
-    #Split re1 into re1 and rex if two Hi-C (not re2) restriction enzymes specified
+    #Split re1 into re1 and rex if more than one Hi-C (not re2) restriction enzymes specified
     if($config{re1} =~ /:/){
-        my @enzymeArray = split( /:/, $config{re1} );
-        $config{re1} = shift @enzymeArray;
-        @{$config{rex}} = @enzymeArray;
-        #($config{re1}, $config{rex}) = split( /:/, $config{re1} );
+        my $rA_res = [ split( /:/, $config{re1} ) ];
+        $config{re1} = shift @{$rA_res};
+        (scalar @{$rA_res} == 0) ? $config{rex} == '' : $config{rex} = $rA_res;
     }
 
-
-
-    foreach my $re ( 're1', 're2', 'rex' ) {    #Check whether the RE names been included
+    foreach my $re ('re1', 're2', 'rex') {    #Check whether the RE names been included
         my $hash_id_re_name = $re . '_name';
         if ( $config{$re} ne '' ) {
-            if ( $config{$re} =~ /,/ ) {
+            if ($re eq 'rex') {
+                my @rex_seq = ();
+                my @rex_name = ();
+                foreach my $rex (@{$config{$re}}) {
+                    if ( $rex =~ /,/ ) {
+                        my ( $seq, $name ) = split( /,/, $rex );
+                        $seq = uc $seq;    #Standardise by converting to upper case
+                        push @rex_seq, $seq;
+                        push @rex_name, $name;
+                    } else {
+                        push @rex_seq, uc $rex;
+                        push @rex_name, $re . '_unspecified';
+                    }
+                }
+                $config{$re}              = \@rex_seq;
+                $config{$hash_id_re_name} = \@rex_name;
+            } elsif ( $config{$re} =~ /,/ ) {
                 my ( $seq, $name ) = split( /,/, $config{$re} );
                 $seq = uc $seq;    #Standardise by converting to upper case
                 $config{$re}              = $seq;
@@ -295,30 +317,58 @@ sub check_parameters {
         }
     }
 
-    foreach my $re ( 're1', 're2', 'rex' ) {       #Check RE are in correct format
+    foreach my $re ('re1', 're2', 'rex') {       #Check RE are in correct format
         if ( $config{$re} ne 'None' ) {
-            unless ( $config{$re} =~ /^[ACGTN\^]+$/ ) {
-                warn "Restriction enzyme: '$config{$re}' should only contain the characters: 'A','G','C','T', 'N' or '^'\n";
-                $parameters_ok = 0;
-            }
+            if ( $re eq 'rex' ) {
+                for ( my $i = 0; $i < scalar(@{$config{$re}}; $i++ ) {
+                    unless ( $config{$re}->[$i] =~ /^[ACGTN\^]+$/ ) {
+                        warn "Restriction enzyme: '$config{$re}->[$i]' should only contain the characters: 'A','G','C','T', 'N' or '^'\n";
+                        $parameters_ok = 0;
+                    }
 
-            unless ( ( $config{$re} =~ tr/\^// ) == 1 ) {
-                warn "Restriction enzyme: '$config{$re}' should contain one caret character ('^')\n";
-                $parameters_ok = 0;
-            }
+                    unless ( ( $config{$re}->[$i] =~ tr/\^// ) == 1 ) {
+                        warn "Restriction enzyme: '$config{$re}->[$i]' should contain one caret character ('^')\n";
+                        $parameters_ok = 0;
+                    }
 
-            my $hash_id_re_name = $re . '_name';
-            unless ( $config{$hash_id_re_name} =~ /^\w*$/ ) {
-                warn "The restriction enzyme name '$config{$hash_id_re_name}' should only contain alphanumeric characters\n";
-				$parameters_ok = 0;
+                    my $hash_id_re_name = $re . '_name';
+                    unless ( $config{$hash_id_re_name}->[$i] =~ /^\w*$/ ) {
+                        warn "The restriction enzyme name '$config{$hash_id_re_name}->[$i]' should only contain alphanumeric characters\n";
+                        $parameters_ok = 0;
+                    }
+                }
+            } else {
+                unless ( $config{$re} =~ /^[ACGTN\^]+$/ ) {
+                    warn "Restriction enzyme: '$config{$re}' should only contain the characters: 'A','G','C','T', 'N' or '^'\n";
+                    $parameters_ok = 0;
+                }
+
+                unless ( ( $config{$re} =~ tr/\^// ) == 1 ) {
+                    warn "Restriction enzyme: '$config{$re}' should contain one caret character ('^')\n";
+                    $parameters_ok = 0;
+                }
+
+                my $hash_id_re_name = $re . '_name';
+                unless ( $config{$hash_id_re_name} =~ /^\w*$/ ) {
+                    warn "The restriction enzyme name '$config{$hash_id_re_name}' should only contain alphanumeric characters\n";
+                    $parameters_ok = 0;
+                }
             }
         }
     }
 
-    foreach my $re ( 're1', 're2', 'rex' ) {    #Create a config term storing the sequence with the caret (the caret will be removed from the original)
+    foreach my $re ('re1', 're2', 'rex') {    #Create a config term storing the sequence with the caret (the caret will be removed from the original)
         if ( $re ne 'None' ) {
-            my $hash_id_re_name = $re . '_with_caret';
-            $config{$hash_id_re_name} = $config{$re};
+            if ( $re eq 'rex' ) {
+                my @rex_name_with_caret = ();
+                for ( my $i = 0; $i < scalar(@{$config{$re}}; $i++ ) {
+                    push @rex_name_with_caret, $config{$re}->[$i];
+                }
+                $config{$re.'_with_caret'} = \@rex_name_with_caret
+            } else {
+                my $hash_id_re_name = $re . '_with_caret';
+                $config{$hash_id_re_name} = $config{$re};
+            }
         }
     }
 
@@ -338,23 +388,64 @@ sub check_parameters {
 sub digest {
     my %digest_positions = ();
 
-    #The positions in the hash are the last base of a restriction fragment.
-    while ( $sequence =~ /$config{re1}/ig ) {
-        my $lastbase = ( pos($sequence) ) - $re1_cut_remainder;
-        $digest_positions{$lastbase} = "Re1" unless($lastbase == 0);   #unless conditional prevents initialisation errors
-    }
-
-    if ( $config{rex} ne 'None' ) {
-        while ( $sequence =~ /$config{rex}/ig ) {
-            my $lastbase = ( pos($sequence) ) - $rex_cut_remainder;
-            $digest_positions{$lastbase} = "Re1" unless($lastbase == 0);;
+    #First check if re1 cut-site contains any Ns
+    if ( $config{re1} =~ m/N/ ) {
+        my $rA_cutsites = cutsite_deduct( -seq => $config{re1} )
+        foreach my $cutsite (@{$rA_cutsites}) {
+            #The positions in the hash are the last base of a restriction fragment.
+            while ( $sequence =~ /$cutsite/ig ) {
+                my $lastbase = ( pos($sequence) ) - $re1_cut_remainder;
+                $digest_positions{$lastbase} = "Re1" unless($lastbase == 0);   #unless conditional prevents initialisation errors
+            }
+        }
+    } else {
+        #The positions in the hash are the last base of a restriction fragment.
+        while ( $sequence =~ /$config{re1}/ig ) {
+            my $lastbase = ( pos($sequence) ) - $re1_cut_remainder;
+            $digest_positions{$lastbase} = "Re1" unless($lastbase == 0);   #unless conditional prevents initialisation errors
         }
     }
 
+    #Process all the potential rex sequences
+    if ( $config{rex} ne 'None' ) {
+        foreach my $rex (@{$config{rex}}) {
+            #First check if curren rex cut-site contains any Ns
+            if ( $rex =~ m/N/ ) {
+                my $rA_cutsites = cutsite_deduct( -seq => $rex )
+                foreach my $cutsite (@{$rA_cutsites}) {
+                    #The positions in the hash are the last base of a restriction fragment.
+                    while ( $sequence =~ /$cutsite/ig ) {
+                        my $lastbase = ( pos($sequence) ) - $rex_cut_remainder{$rex};
+                        $digest_positions{$lastbase} = "Re1" unless($lastbase == 0);   #unless conditional prevents initialisation errors
+                    }
+                }
+            } else {
+                #The positions in the hash are the last base of a restriction fragment.
+                while ( $sequence =~ /$config{re1}/ig ) {
+                    my $lastbase = ( pos($sequence) ) - $re1_cut_remainder;
+                    $digest_positions{$lastbase} = "Re1" unless($lastbase == 0);   #unless conditional prevents initialisation errors
+                }
+            }
+        }
+    }
+
+    #Process re2 if provided
     if ( $config{re2} ) {
-        while ( $sequence =~ /$config{re2}/ig ) {
-            my $lastbase = ( pos($sequence) ) - $re2_cut_remainder;
-            $digest_positions{$lastbase} = "Re2" unless($lastbase == 0);
+        #First check if re2 cut-site contains any Ns
+        if ( $config{re2} =~ m/N/ ) {
+            my $rA_cutsites = cutsite_deduct( -seq => $config{re2} )
+            foreach my $cutsite (@{$rA_cutsites}) {
+                #The positions in the hash are the last base of a restriction fragment.
+                while ( $sequence =~ /$cutsite/ig ) {
+                    my $lastbase = ( pos($sequence) ) - $re1_cut_remainder;
+                    $digest_positions{$lastbase} = "Re1" unless($lastbase == 0);   #unless conditional prevents initialisation errors
+                }
+            }
+        } else {
+            while ( $sequence =~ /$config{re2}/ig ) {
+                my $lastbase = ( pos($sequence) ) - $re2_cut_remainder;
+                $digest_positions{$lastbase} = "Re2" unless($lastbase == 0);
+            }
         }
     }
 
@@ -403,6 +494,31 @@ sub digest {
     }
 }
 
+####################
+#Subroutine 'cutsite_deduct':
+#processes the $sequence variable, creating 4 new sequences by replacing Ns by A, C, T and G
+#also handles multiple Ns cases with a recursive call
+sub cutsite_deduct {
+    my %arg = @_;
+    my $seq = $arg{-seq};
+
+    my $rA_deducted_seq = [];
+
+    
+    foreach my $nuc ('A', 'C';, 'T', 'G') {
+        #Replace N by $nuc
+        my ($newseq = $seq) =~ s/N/$nuc/i;
+        #Check for remaining Ns within $newseq
+        if ( $newseq =~ m/N/ ) {
+            $rA_deducted_seq = [ map { push @{$rA_deducted_seq}, $_ } cutsite_deduct( -seq => $newseq ) ]
+        } else {
+            push @{$rA_deducted_seq}, $newseq;
+        }
+    }
+
+    return $rA_deducted_seq;
+}
+
 ##############################
 #Subroutine "filenamecreator":
 #names the outputfile
@@ -419,7 +535,7 @@ sub filenamecreator {
 
     my $filename;
     if ( $config{rex} ne 'None' ) {    #$rex declared outside of subroutine
-        $filename = "Digest_" . $config{genome} . "_" . $config{re1_name} . "_" . $config{rex_name} . "_" . $config{re2_name} . "_" . $config{timestamp} . ".txt";
+        $filename = "Digest_" . $config{genome} . "_" . $config{re1_name} . "_" . join "_", @{$config{rex_name}} . "_" . $config{re2_name} . "_" . $config{timestamp} . ".txt";
     } else {
         $filename = "Digest_" . $config{genome} . "_" . $config{re1_name} . "_" . $config{re2_name} . "_" . $config{timestamp} . ".txt";
     }
