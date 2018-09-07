@@ -135,13 +135,15 @@ if ( $config{rex} ne 'None' ) {
     }
 }
 
-
 # Second restriction digestion
-my $re2_cut_remainder;
+my %re2_cut_remainder;
 if ( $config{re2} ne 'None' ) {
-    $config{re2} =~ /\^/g;
-    $re2_cut_remainder = length( $config{re2} ) - pos( $config{re2} );
-    $config{re2} =~ s/\^//;
+    foreach my $re2 (@{$config{re2}}) {
+        $re2 =~ /\^/g;
+        my $current_re2_cut_remainder = length( $re2 ) - pos( $re2 );
+        $re2 =~ s/\^//;
+        $re2_cut_remainder{$re2} = $current_re2_cut_remainder
+    }
 }
 
 #Lists the chromosome, restriction fragment number.
@@ -159,8 +161,16 @@ if ( $config{rex} ne 'None' ) {
         $rexString .= "$config{rex_name}->[$i] \[$config{rex_with_caret}->[$i]\] ";
     }
     $rexString =~ s/ $//;
-    if ( $config{re2} ) {
-        print OUT "Genome:$config{genome}\tRestriction_Enzyme1:$config{re1_name} \[$config{re1_with_caret}\] $rexString\tRestriction_Enzyme2:$config{re2_name} [$config{re2_with_caret}\]\tHicup Digester version $hicup_module::VERSION\n";    #Use by hicup_filter to determine whether double digest or sonication protocol
+
+    if ( $config{re2} ne 'None' ) {
+        #Prepare the "re2_name [re2_with_caret]" string
+        my $re2String = "";
+        for (my $i = 0; $i < scalar(@{$config{re2}}); $i++) {
+            $re2String .= "$config{re2_name}->[$i] \[$config{re2_with_caret}->[$i]\] ";
+        }
+        $re2String =~ s/ $//;
+
+        print OUT "Genome:$config{genome}\tRestriction_Enzyme1:$config{re1_name} \[$config{re1_with_caret}\] $rexString\tRestriction_Enzyme2:$re2String\tHicup Digester version $hicup_module::VERSION\n";    #Use by hicup_filter to determine whether double digest or sonication protocol
         print OUT "Chromosome\tFragment_Start_Position\tFragment_End_Position\tFragment_Number\tRE1_Fragment_Number\t5'_Restriction_Site\t3'_Restriction_Site\n";
     } else {
         print OUT "Genome:$config{genome}\tRestriction_Enzyme1:$config{re1_name} \[$config{re1_with_caret}\] $rexString\tRestriction_Enzyme2:$config{re2_name}\tHicup Digester version $hicup_module::VERSION\n";                                 #Use by hicup_filter to determine whether double digest or sonication protocol
@@ -169,7 +179,14 @@ if ( $config{rex} ne 'None' ) {
 } else {
 
     if ( $config{re2} ne 'None' ) {
-        print OUT "Genome:$config{genome}\tRestriction_Enzyme1:$config{re1_name} \[$config{re1_with_caret}\]\tRestriction_Enzyme2:$config{re2_name} \[$config{re2_with_caret}\]\tHicup digester version $hicup_module::VERSION\n";                                                   #Use by hicup_filter to determine whether double digest or sonication protocol
+        #Prepare the "re2_name [re2_with_caret]" string
+        my $re2String = "";
+        for (my $i = 0; $i < scalar(@{$config{re2}}); $i++) {
+            $re2String .= "$config{re2_name}->[$i] \[$config{re2_with_caret}->[$i]\] ";
+        }
+        $re2String =~ s/ $//;
+
+        print OUT "Genome:$config{genome}\tRestriction_Enzyme1:$config{re1_name} \[$config{re1_with_caret}\]\tRestriction_Enzyme2:$re2String\tHicup digester version $hicup_module::VERSION\n";                                                   #Use by hicup_filter to determine whether double digest or sonication protocol
         print OUT "Chromosome\tFragment_Start_Position\tFragment_End_Position\tFragment_Number\tRE1_Fragment_Number\t5'_Restriction_Site\t3'_Restriction_Site\n";
     } else {
         print OUT "Genome:$config{genome}\tRestriction_Enzyme1:$config{re1_name} \[$config{re1_with_caret}\]\tRestriction_Enzyme2:$config{re2_name}\tHicup digester version $hicup_module::VERSION\n";                                                                               #Use by hicup_filter to determine whether double digest or sonication protocol
@@ -289,8 +306,8 @@ sub check_parameters {
         my $rA_res = [ split( /:/, $config{re2} ) ];
         (scalar @{$rA_res} == 0) ? $config{re2} = '' : $config{re2} = $rA_res;
     #Even if there is only one re2 enzyme specified, we still store in an array reference
-    } else {
-        ($config{re2}) ? $config{re2} = [ $config{re2} ] : ''
+    } elsif ( $config{re2} ne '' ) {
+        $config{re2} = [ $config{re2} ];
     }
 
     foreach my $re ('re1', 're2', 'rex') {    #Check whether the RE names been included
@@ -399,7 +416,7 @@ sub digest {
 
     #First check if re1 cut-site contains any Ns
     if ( $config{re1} =~ m/N/ ) {
-        my $rA_cutsites = cutsite_deduct( -seq => $config{re1} );
+        my $rA_cutsites = cutsite_deduce( -seq => $config{re1} );
         foreach my $cutsite (@{$rA_cutsites}) {
             #The positions in the hash are the last base of a restriction fragment.
             while ( $sequence =~ /$cutsite/ig ) {
@@ -418,9 +435,9 @@ sub digest {
     #Process all the potential rex sequences
     if ( $config{rex} ne 'None' ) {
         foreach my $rex (@{$config{rex}}) {
-            #First check if curren rex cut-site contains any Ns
+            #First check if current rex cut-site contains any Ns
             if ( $rex =~ m/N/ ) {
-                my $rA_cutsites = cutsite_deduct( -seq => $rex );
+                my $rA_cutsites = cutsite_deduce( -seq => $rex );
                 foreach my $cutsite (@{$rA_cutsites}) {
                     #The positions in the hash are the last base of a restriction fragment.
                     while ( $sequence =~ /$cutsite/ig ) {
@@ -431,7 +448,7 @@ sub digest {
             } else {
                 #The positions in the hash are the last base of a restriction fragment.
                 while ( $sequence =~ /$rex/ig ) {
-                    my $lastbase = ( pos($sequence) ) - $re1_cut_remainder;
+                    my $lastbase = ( pos($sequence) ) - $rex_cut_remainder{$rex};
                     $digest_positions{$lastbase} = "Re1" unless($lastbase == 0);   #unless conditional prevents initialisation errors
                 }
             }
@@ -439,21 +456,23 @@ sub digest {
     }
 
     #Process re2 if provided
-    if ( $config{re2} ) {
-        #First check if re2 cut-site contains any Ns
-        if ( $config{re2} =~ m/N/ ) {
-            my $rA_cutsites = cutsite_deduct( -seq => $config{re2} );
-            foreach my $cutsite (@{$rA_cutsites}) {
-                #The positions in the hash are the last base of a restriction fragment.
-                while ( $sequence =~ /$cutsite/ig ) {
-                    my $lastbase = ( pos($sequence) ) - $re1_cut_remainder;
-                    $digest_positions{$lastbase} = "Re1" unless($lastbase == 0);   #unless conditional prevents initialisation errors
+    if ( $config{re2} ne 'None' ) {
+        foreach my $re2 (@{$config{re2}}) {
+            #First check if current re2 cut-site contains any Ns
+            if ( $re2 =~ m/N/ ) {
+                my $rA_cutsites = cutsite_deduce( -seq => $re2 );
+                foreach my $cutsite (@{$rA_cutsites}) {
+                    #The positions in the hash are the last base of a restriction fragment.
+                    while ( $sequence =~ /$cutsite/ig ) {
+                        my $lastbase = ( pos($sequence) ) - $re2_cut_remainder{$re2};
+                        $digest_positions{$lastbase} = "Re2" unless($lastbase == 0);   #unless conditional prevents initialisation errors
+                    }
                 }
-            }
-        } else {
-            while ( $sequence =~ /$config{re2}/ig ) {
-                my $lastbase = ( pos($sequence) ) - $re2_cut_remainder;
-                $digest_positions{$lastbase} = "Re2" unless($lastbase == 0);
+            } else {
+                while ( $sequence =~ /$re2/ig ) {
+                    my $lastbase = ( pos($sequence) ) - $re2_cut_remainder{$re2};
+                    $digest_positions{$lastbase} = "Re2" unless($lastbase == 0);
+                }
             }
         }
     }
@@ -504,10 +523,10 @@ sub digest {
 }
 
 ####################
-#Subroutine 'cutsite_deduct':
+#Subroutine 'cutsite_deduce':
 #processes the $sequence variable, creating 4 new sequences by replacing Ns by A, C, T and G
 #also handles multiple Ns cases with a recursive call
-sub cutsite_deduct {
+sub cutsite_deduce {
     my %arg = @_;
     my $seq = $arg{-seq};
 
@@ -519,7 +538,9 @@ sub cutsite_deduct {
         (my $newseq = $seq) =~ s/N/$nuc/i;
         #Check for remaining Ns within $newseq
         if ( $newseq =~ m/N/ ) {
-            $rA_deducted_seq = [ map { push @{$rA_deducted_seq}, $_ } cutsite_deduct( -seq => $newseq ) ]
+            my $rA_new_deducted_seq = cutsite_deduce( -seq => $newseq );
+            #   $rA_deducted_seq = [ map { push @{$rA_deducted_seq}, $_ } @{$rA_new_deducted_seq} ];
+            do { push @{$rA_deducted_seq}, $_ } foreach(@{$rA_new_deducted_seq});
         } else {
             push @{$rA_deducted_seq}, $newseq;
         }
@@ -542,11 +563,14 @@ sub filenamecreator {
         $now[3], $now[4] + 1, $now[5] + 1900
     );
 
+    my $re2_name = $config{re2_name}; 
+    ($re2_name ne 'None') and $re2_name = join("_", @{$config{re2_name}});
+
     my $filename;
     if ( $config{rex} ne 'None' ) {    #$rex declared outside of subroutine
-        $filename = "Digest_" . $config{genome} . "_" . $config{re1_name} . "_" . join("_", @{$config{rex_name}}) . "_" . $config{re2_name} . "_" . $config{timestamp} . ".txt";
+        $filename = "Digest_" . $config{genome} . "_" . $config{re1_name} . "_" . join("_", @{$config{rex_name}}) . "_" . $re2_name . "_" . $config{timestamp} . ".txt";
     } else {
-        $filename = "Digest_" . $config{genome} . "_" . $config{re1_name} . "_" . $config{re2_name} . "_" . $config{timestamp} . ".txt";
+        $filename = "Digest_" . $config{genome} . "_" . $config{re1_name} . "_" . $re2_name . "_" . $config{timestamp} . ".txt";
     }
 
     #Print to the summary file
