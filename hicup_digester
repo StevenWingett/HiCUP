@@ -278,31 +278,40 @@ sub check_parameters {
     }
 
     #Split re1 into re1 and rex if more than one Hi-C (not re2) restriction enzymes specified
-    if($config{re1} =~ /:/){
+    if ( $config{re1} =~ /:/ ) {
         my $rA_res = [ split( /:/, $config{re1} ) ];
         $config{re1} = shift @{$rA_res};
         (scalar @{$rA_res} == 0) ? $config{rex} = '' : $config{rex} = $rA_res;
     }
 
+    #Split re2 into multiple enzyme entries, using an array reference
+    if ( $config{re2} =~ /:/ ) {
+        my $rA_res = [ split( /:/, $config{re2} ) ];
+        (scalar @{$rA_res} == 0) ? $config{re2} = '' : $config{re2} = $rA_res;
+    #Even if there is only one re2 enzyme specified, we still store in an array reference
+    } else {
+        ($config{re2}) ? $config{re2} = [ $config{re2} ] : ''
+    }
+
     foreach my $re ('re1', 're2', 'rex') {    #Check whether the RE names been included
         my $hash_id_re_name = $re . '_name';
         if ( $config{$re} ne '' ) {
-            if ($re eq 'rex') {
-                my @rex_seq = ();
-                my @rex_name = ();
-                foreach my $rex (@{$config{$re}}) {
-                    if ( $rex =~ /,/ ) {
-                        my ( $seq, $name ) = split( /,/, $rex );
+            if ($re ne 're1') {
+                my @re_seq = ();
+                my @re_name = ();
+                foreach my $re_string (@{$config{$re}}) {
+                    if ( $re_string =~ /,/ ) {
+                        my ( $seq, $name ) = split( /,/, $re_string );
                         $seq = uc $seq;    #Standardise by converting to upper case
-                        push @rex_seq, $seq;
-                        push @rex_name, $name;
+                        push @re_seq, $seq;
+                        push @re_name, $name;
                     } else {
-                        push @rex_seq, uc $rex;
-                        push @rex_name, $re . '_unspecified';
+                        push @re_seq, uc $re_string;
+                        push @re_name, $re . '_unspecified';
                     }
                 }
-                $config{$re}              = \@rex_seq;
-                $config{$hash_id_re_name} = \@rex_name;
+                $config{$re}              = \@re_seq;
+                $config{$hash_id_re_name} = \@re_name;
             } elsif ( $config{$re} =~ /,/ ) {
                 my ( $seq, $name ) = split( /,/, $config{$re} );
                 $seq = uc $seq;    #Standardise by converting to upper case
@@ -319,7 +328,7 @@ sub check_parameters {
 
     foreach my $re ('re1', 're2', 'rex') {       #Check RE are in correct format
         if ( $config{$re} ne 'None' ) {
-            if ( $re eq 'rex' ) {
+            if ( $re ne 're1' ) {
                 for ( my $i = 0; $i < scalar(@{$config{$re}}); $i++ ) {
                     unless ( $config{$re}->[$i] =~ /^[ACGTN\^]+$/ ) {
                         warn "Restriction enzyme: '$config{$re}->[$i]' should only contain the characters: 'A','G','C','T', 'N' or '^'\n";
