@@ -360,7 +360,7 @@ sub check_parameters {
     foreach my $re ('re1', 're2', 'rex') {    #Create a config term storing the sequence with the caret (the caret will be removed from the original)
         my $hash_id_re_name = $re . '_with_caret';
         if ( $re ne 'None' ) {
-            if ( $re eq 'rex' ) {
+            if ( $re eq 'rex'  && $config{$re} ne 'None') {
                 my @rex_name_with_caret = ();
                 for ( my $i = 0; $i < scalar(@{$config{$re}}); $i++ ) {
                     push @rex_name_with_caret, $config{$re}->[$i];
