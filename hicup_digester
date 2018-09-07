@@ -281,7 +281,7 @@ sub check_parameters {
     if($config{re1} =~ /:/){
         my $rA_res = [ split( /:/, $config{re1} ) ];
         $config{re1} = shift @{$rA_res};
-        (scalar @{$rA_res} == 0) ? $config{rex} == '' : $config{rex} = $rA_res;
+        (scalar @{$rA_res} == 0) ? $config{rex} = '' : $config{rex} = $rA_res;
     }
 
     foreach my $re ('re1', 're2', 'rex') {    #Check whether the RE names been included
@@ -320,7 +320,7 @@ sub check_parameters {
     foreach my $re ('re1', 're2', 'rex') {       #Check RE are in correct format
         if ( $config{$re} ne 'None' ) {
             if ( $re eq 'rex' ) {
-                for ( my $i = 0; $i < scalar(@{$config{$re}}; $i++ ) {
+                for ( my $i = 0; $i < scalar(@{$config{$re}}); $i++ ) {
                     unless ( $config{$re}->[$i] =~ /^[ACGTN\^]+$/ ) {
                         warn "Restriction enzyme: '$config{$re}->[$i]' should only contain the characters: 'A','G','C','T', 'N' or '^'\n";
                         $parameters_ok = 0;
@@ -358,21 +358,21 @@ sub check_parameters {
     }
 
     foreach my $re ('re1', 're2', 'rex') {    #Create a config term storing the sequence with the caret (the caret will be removed from the original)
+        my $hash_id_re_name = $re . '_with_caret';
         if ( $re ne 'None' ) {
             if ( $re eq 'rex' ) {
                 my @rex_name_with_caret = ();
-                for ( my $i = 0; $i < scalar(@{$config{$re}}; $i++ ) {
+                for ( my $i = 0; $i < scalar(@{$config{$re}}); $i++ ) {
                     push @rex_name_with_caret, $config{$re}->[$i];
                 }
-                $config{$re.'_with_caret'} = \@rex_name_with_caret
+                $config{$hash_id_re_name} = \@rex_name_with_caret
             } else {
-                my $hash_id_re_name = $re . '_with_caret';
                 $config{$hash_id_re_name} = $config{$re};
             }
         }
     }
 
-    if(hasval ($config{genome}) ){
+    if (hasval ($config{genome}) ) {
         unless($config{genome} =~ /^\w*$/){
             warn "Option --genome may only be passed alphanumeric characters and underscore, please adjust\n";
             $parameters_ok = 0;
@@ -390,7 +390,7 @@ sub digest {
 
     #First check if re1 cut-site contains any Ns
     if ( $config{re1} =~ m/N/ ) {
-        my $rA_cutsites = cutsite_deduct( -seq => $config{re1} )
+        my $rA_cutsites = cutsite_deduct( -seq => $config{re1} );
         foreach my $cutsite (@{$rA_cutsites}) {
             #The positions in the hash are the last base of a restriction fragment.
             while ( $sequence =~ /$cutsite/ig ) {
@@ -411,7 +411,7 @@ sub digest {
         foreach my $rex (@{$config{rex}}) {
             #First check if curren rex cut-site contains any Ns
             if ( $rex =~ m/N/ ) {
-                my $rA_cutsites = cutsite_deduct( -seq => $rex )
+                my $rA_cutsites = cutsite_deduct( -seq => $rex );
                 foreach my $cutsite (@{$rA_cutsites}) {
                     #The positions in the hash are the last base of a restriction fragment.
                     while ( $sequence =~ /$cutsite/ig ) {
@@ -433,7 +433,7 @@ sub digest {
     if ( $config{re2} ) {
         #First check if re2 cut-site contains any Ns
         if ( $config{re2} =~ m/N/ ) {
-            my $rA_cutsites = cutsite_deduct( -seq => $config{re2} )
+            my $rA_cutsites = cutsite_deduct( -seq => $config{re2} );
             foreach my $cutsite (@{$rA_cutsites}) {
                 #The positions in the hash are the last base of a restriction fragment.
                 while ( $sequence =~ /$cutsite/ig ) {
@@ -505,9 +505,9 @@ sub cutsite_deduct {
     my $rA_deducted_seq = [];
 
     
-    foreach my $nuc ('A', 'C';, 'T', 'G') {
+    foreach my $nuc ('A', 'C', 'T', 'G') {
         #Replace N by $nuc
-        my ($newseq = $seq) =~ s/N/$nuc/i;
+        (my $newseq = $seq) =~ s/N/$nuc/i;
         #Check for remaining Ns within $newseq
         if ( $newseq =~ m/N/ ) {
             $rA_deducted_seq = [ map { push @{$rA_deducted_seq}, $_ } cutsite_deduct( -seq => $newseq ) ]
