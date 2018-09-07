@@ -156,11 +156,11 @@ if ( $config{rex} ne 'None' ) {
     #Prepare the "rex_name [rex_with_caret]" string
     my $rexString = "";
     for (my $i = 0; $i < scalar(@{$config{rex}}); $i++) {
-        $rexString .= "$config{rex_name}->[$i] \[$config{rex_with_caret}\]->i ";
+        $rexString .= "$config{rex_name}->[$i] \[$config{rex_with_caret}->[$i]\] ";
     }
     $rexString =~ s/ $//;
     if ( $config{re2} ) {
-        print OUT "Genome:$config{genome}\tRestriction_Enzyme1:$config{re1_name} \[$config{re1_with_caret}\] $rexString\tRestriction_Enzyme2:$config{re2_name} \t[$config{re2_with_caret}\]\tHicup Digester version $hicup_module::VERSION\n";    #Use by hicup_filter to determine whether double digest or sonication protocol
+        print OUT "Genome:$config{genome}\tRestriction_Enzyme1:$config{re1_name} \[$config{re1_with_caret}\] $rexString\tRestriction_Enzyme2:$config{re2_name} [$config{re2_with_caret}\]\tHicup Digester version $hicup_module::VERSION\n";    #Use by hicup_filter to determine whether double digest or sonication protocol
         print OUT "Chromosome\tFragment_Start_Position\tFragment_End_Position\tFragment_Number\tRE1_Fragment_Number\t5'_Restriction_Site\t3'_Restriction_Site\n";
     } else {
         print OUT "Genome:$config{genome}\tRestriction_Enzyme1:$config{re1_name} \[$config{re1_with_caret}\] $rexString\tRestriction_Enzyme2:$config{re2_name}\tHicup Digester version $hicup_module::VERSION\n";                                 #Use by hicup_filter to determine whether double digest or sonication protocol
@@ -421,7 +421,7 @@ sub digest {
                 }
             } else {
                 #The positions in the hash are the last base of a restriction fragment.
-                while ( $sequence =~ /$config{re1}/ig ) {
+                while ( $sequence =~ /$rex/ig ) {
                     my $lastbase = ( pos($sequence) ) - $re1_cut_remainder;
                     $digest_positions{$lastbase} = "Re1" unless($lastbase == 0);   #unless conditional prevents initialisation errors
                 }
@@ -535,7 +535,7 @@ sub filenamecreator {
 
     my $filename;
     if ( $config{rex} ne 'None' ) {    #$rex declared outside of subroutine
-        $filename = "Digest_" . $config{genome} . "_" . $config{re1_name} . "_" . join "_", @{$config{rex_name}} . "_" . $config{re2_name} . "_" . $config{timestamp} . ".txt";
+        $filename = "Digest_" . $config{genome} . "_" . $config{re1_name} . "_" . join("_", @{$config{rex_name}}) . "_" . $config{re2_name} . "_" . $config{timestamp} . ".txt";
     } else {
         $filename = "Digest_" . $config{genome} . "_" . $config{re1_name} . "_" . $config{re2_name} . "_" . $config{timestamp} . ".txt";
     }
