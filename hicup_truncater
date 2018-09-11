@@ -120,7 +120,7 @@ unless ( check_files_exist( \@filenames, 'EXISTS' ) ) {
 }
 
 my %files = @filenames;                                          #%files : hash of paired forward and reverse files
-my ( $before_cut, $after_cut ) = check_re1();
+my $rH_before_after_cuts = check_re1();
 my @ligation_sequences;
 
 #Check the output directory exists
@@ -141,19 +141,23 @@ if ( $config{outdir} ne '' ) {
 checkR( \%config );
 
 #Determine the ligation boundary sequence
-my $ligsite;
-if ( $config{seq_trunc} eq '' ) {    #$origseq and $before_cut only required if Hi-C ligation junction determined computationally
-    if ($config{nofill}) {
-        $ligsite = $config{re1};     #Fill-in not performed, ligation junction is the original restriction site sequence
-        $ligsite =~ s/\^//g;         #Remove the caret from the ligation sequence
+my $rH_ligsite;
+if ( $config{seq_trunc} eq '' ) {   #$origseq and $before_cut only required if Hi-C ligation junction determined computationally
+    if ($config{nofill}) {          
+#         $ligsite = $config{re1};     #Fill-in not performed, ligation junction is the original restriction site sequence
+#         $ligsite =~ s/\^//g;         #Remove the caret from the ligation sequence
+        $rH_ligsite = { map { (my $i = $_) =~ s/\^//g; $_ => $i } @{$config{re1}} };   #Fill-in not performed, ligation junction is the original restriction site sequence without the caret
     } else {
-        $ligsite = fill_end( $config{re1} );
+        $rH_ligsite = fill_end( $rH_before_after_cuts );
     }
-    $config{re1} =~ s/\^//g;         #Remove the caret from the restriction site
+#     $config{re1} =~ s/\^//g;         #Remove the caret from the restriction site
+    s/\^//g for @{$config{re1}};    #Remove the caret from the restriction sites
 }
 
-print "Truncating with HiCUP Truncater v$hicup_module::VERSION\n" unless ($config{quiet});
-print "Truncating sequences at occurrence of sequence '$ligsite'\n" unless ( $config{quiet} );
+my @ligations_sequences = map { @{$rH_ligsite->{$_}} } keys %{$rH_ligsite};
+my $string = join ", ", @ligations_sequences;
+print "Truncating with HiCUP Truncater v$hicup_module::VERSION\n" unless ( $config{quiet} );
+print "Truncating sequences at occurrence of sequences '$string'\n" unless ( $config{quiet} );
 
 #Before processing the sequence file check whether the output output files
 #(yet to be generated) don't already exist.  Doing this now means the
@@ -230,19 +234,40 @@ sub check_re1 {
     $config{re1} =~ tr/atcg/ATCG/;
     chomp $config{re1};
 
-    #Check this is a nucleotide sequence with a cut site
-    unless ( $config{re1} =~ /^[ATCG\^]+$/ ) {
-        die "The restriction site '$config{re1}' is not a valid DNA sequence.\n";
+    #Check restriction enzymes in correct format
+    if ( $config{re1} eq '' ) {    #RE1 present
+        warn "Please specify restriction enzyme (--re1)\n";
     }
 
-    unless ( ( $config{re1} =~ tr/\^// ) == 1 ) {
-        die "The restriction site should contain one cut position, denoted by \'^\'.\n";
+    #Split re1 into multiple enzyme entries, using an array reference
+    if ( $config{re1} =~ /:/ ) {
+        my $rA_res = [ split( /:/, $config{re1} ) ];
+        $config{re1} = $rA_res;
+    #Even if there is only one re1 enzyme specified, we still store it in an array reference
+    } elsif ( $config{re1} ne '' ) {
+        $config{re1} = [ $config{re1} ];
     }
 
-    #Determine the bases up until the cut site i.e. where a truncated sequence ends
-    my ( $before_cut, $after_cut ) = split( /\^/, $config{re1} );
+    my %cuts = ();
+    foreach my $re1 (@{$config{re1}}) {
+        #Check this is a nucleotide sequence with a cut site
+        unless ( $re1 =~ /^[ATCG\^]+$/ ) {
+            die "The restriction site '$re1' is not a valid DNA sequence.\n";
+        }
 
-    return ( $before_cut, $after_cut );
+        unless ( ( $re1 =~ tr/\^// ) == 1 ) {
+            die "The restriction site should contain one, and only one, cut position, denoted by \'^\'.\n";
+        }
+
+        #Determine the bases up until the cut site i.e. where a truncated sequence ends
+        my ( $before_cut, $after_cut ) = split( /\^/, $re1 );
+
+        #Remove the caret ("^") symbol
+        $re1 =~ s/\^//g;
+        $cuts{$re1} = [ $before_cut, $after_cut ];
+    }
+
+    return \%cuts;
 }
 
 #######################
@@ -253,51 +278,58 @@ sub check_re1 {
 #sequence will be: A + GATC + GATC + T = AGATCGATCT.
 sub fill_end {
 
-    my $rest_site = $_[0];
+    my %before_after_cuts = %{$_[0]};
 
-    my $five_prime_flank;     #Sequence upstream of the cut site
-    my $fill_in;              #Sequence created by filling-in the overhang
-    my $three_prime_flank;    #Sequence downstream of the cut site
-    my $ligation_sequence;    #Potentially new sequence created at the ligation interface
+    my %ligation_sequences = ();
+    foreach my $before_key (keys %before_after_cuts) {
+        foreach my $after_key (keys %before_after_cuts) {
+            my $beforeCut = $before_after_cuts{$before_key}[0];
+            my $afterCut = $before_after_cuts{$after_key}[1];
 
-    #Determine where the restriction enzyme cuts the sequence,
-    #then remove the caret ("^") symbol
-    $rest_site =~ /\^/g;
-    my $cut_position = pos($rest_site);
-    $rest_site =~ s/\^//g;
+            my $five_prime_flank;     #Sequence upstream of the cut site
+            my $fill_in;              #Sequence created by filling-in the overhang
+            my $three_prime_flank;    #Sequence downstream of the cut site
+            my $ligation_sequence;    #Potentially new sequence created at the ligation interface
 
-    #Determine the "fill-in" sequence
-    my $number_bases_before_cut = $cut_position - 1;
-    my $number_bases_after_cut  = length($rest_site) - $number_bases_before_cut;
-    my $flank_size;
+            #Determine the "fill-in" sequence
+            my $number_bases_before_cut = length $before_after_cuts{$before_key}[0];
+            my $number_bases_after_cut = length $before_after_cuts{$before_key}[1];
+            my $flank_size;
 
-    if ( $number_bases_before_cut > ( length($rest_site) / 2 ) ) {    #Is the flanking sequence the length of the sequence BEFORE or AFTER the cut?
-        $flank_size = $number_bases_after_cut;
-    } else {
-        $flank_size = $number_bases_before_cut;
+            if ( $number_bases_before_cut > ( length($before_key) / 2 ) ) {    #Is the flanking sequence the length of the sequence BEFORE or AFTER the cut?
+                $flank_size = $number_bases_after_cut;
+            } else {
+                $flank_size = $number_bases_before_cut;
+            }
+
+            $five_prime_flank = substr( $before_key, 0, $flank_size );
+            $three_prime_flank = substr( $after_key, ( $flank_size - ( 2 * $flank_size ) ) );
+            $fill_in = substr( $before_key, $flank_size, ( length($before_key) - ( 2 * $flank_size ) ) );
+
+            #Deduce the ligation sequence.  If the restriction enzyme cuts immediately adjacent
+            #to the restriction site the fill-in region is the same as the flanking region and
+            #so the fill-in region only needs to be included once.
+            if ($flank_size) {
+                $ligation_sequence = $five_prime_flank . $fill_in . $fill_in . $three_prime_flank;
+            } else {
+                $ligation_sequence = $five_prime_flank . $fill_in . $three_prime_flank;
+            }
+            push @{$ligation_sequences{$before_key}}, $ligation_sequence;
+            print $before_key . "\t" . $ligation_sequence . "\n";
+        }
     }
 
-    $five_prime_flank = substr( $rest_site, 0, $flank_size );
-    $three_prime_flank = substr( $rest_site, ( $flank_size - ( 2 * $flank_size ) ) );
-    $fill_in = substr( $rest_site, $flank_size, ( length($rest_site) - ( 2 * $flank_size ) ) );
-
-    #Deduce the ligation sequence.  If the restriction enzyme cuts immediately adjacent
-    #to the restriction site the fill-in region is the same as the flanking region and
-    #so the fill-in region only needs to be included once.
-    if ($flank_size) {
-        $ligation_sequence = $five_prime_flank . $fill_in . $fill_in . $three_prime_flank;
-    } else {
-        $ligation_sequence = $five_prime_flank . $fill_in . $three_prime_flank;
-    }
-    return $ligation_sequence;
+    return \%ligation_sequences;
 }
 
 ###########################
 #Subroutine "process_file":
 #Truncates DNA sequences containing the putative Hi-C ligation sequence
 sub process_file {
-
-    my $inputfile = $_[0];
+   # my %args = @_;
+    my $inputfile   = $_[0];
+  #  my $re1         = $args{-re};
+  #  my $ligsite     = $args{-ligseq};
 
     #Create variables for counting the number of sequences truncated/not truncated
     my $reads_processed = 0;
@@ -384,18 +416,31 @@ sub process_file {
                 #Finds the ligation site, if present, and truncates accordingly
                 #(swapping the ligation sequence for the restriction site up until the cut site).
                 #Counts the sequences truncated/not-truncated.
-                my @truncated = split( /$ligsite/, $line2 );
+                my @ligations_sequences = map { @{$rH_ligsite->{$_}} } keys %{$rH_ligsite};
+                my $string = join "|", @ligations_sequences;
 
-                unless ( ( length $line2 ) == ( length $truncated[0] ) ) {
-                    $line2 = $truncated[0] . $config{re1};
-                    $line4 = substr( $line4, 0, ( length $line2 ) );
-                    $truncated_lengths[0] += length $line2;
-                    $truncated_lengths[1]++;
-                    $truncated++;
-                } else {
-                    $not_truncated++;
+                if ( $line2 =~ /($string)/ ) {
+                    my $ligsite = $1;
+                    my $re1;
+                    foreach my $rest_site (@{$config{re1}}) {
+                        if ( grep $_ eq $ligsite, @{$rH_ligsite->{$rest_site}} ) {
+                            $re1 = $rest_site;
+                           last;
+                        }
+                    }
+
+                    my @truncated = split( /$ligsite/, $line2 );
+
+                    unless ( ( length $line2 ) == ( length $truncated[0] ) ) {
+                        $line2 = $truncated[0] . $re1;
+                        $line4 = substr( $line4, 0, ( length $line2 ) );
+                        $truncated_lengths[0] += length $line2;
+                        $truncated_lengths[1]++;
+                        $truncated++;
+                    } else {
+                        $not_truncated++;
+                    }
                 }
-
             }
             print OUT $line1 . $line2 . "\n" . $line3 . $line4 . "\n";
         }
@@ -509,4 +554,5 @@ Full instructions on running the pipeline can be found at:
 www.bioinformatics.babraham.ac.uk/projects/hicup
 
 Steven Wingett, Babraham Institute, Cambridge, UK (steven.wingett@babraham.ac.uk)
+
 
