@@ -303,7 +303,7 @@ sub fill_end {
             }
 
             $five_prime_flank = substr( $before_key, 0, $flank_size );
-            $three_prime_flank = substr( $after_key, ( $flank_size - ( 2 * $flank_size ) ) );
+            $three_prime_flank = substr( $afterCut, ( $flank_size - ( 2 * $flank_size ) ) );
             $fill_in = substr( $before_key, $flank_size, ( length($before_key) - ( 2 * $flank_size ) ) );
 
             #Deduce the ligation sequence.  If the restriction enzyme cuts immediately adjacent
