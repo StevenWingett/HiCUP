@@ -120,7 +120,7 @@ unless ( check_files_exist( \@filenames, 'EXISTS' ) ) {
 }
 
 my %files = @filenames;                                          #%files : hash of paired forward and reverse files
-my $rH_before_after_cuts = check_re1();
+my $rA_junction_sequences = check_re1();
 my @ligation_sequences;
 
 #Check the output directory exists
@@ -141,23 +141,28 @@ if ( $config{outdir} ne '' ) {
 checkR( \%config );
 
 #Determine the ligation boundary sequence
-my $rH_ligsite;
+my $rA_ligsite;
 if ( $config{seq_trunc} eq '' ) {   #$origseq and $before_cut only required if Hi-C ligation junction determined computationally
-    if ($config{nofill}) {          
-#         $ligsite = $config{re1};     #Fill-in not performed, ligation junction is the original restriction site sequence
-#         $ligsite =~ s/\^//g;         #Remove the caret from the ligation sequence
-        $rH_ligsite = { map { (my $i = $_) =~ s/\^//g; $_ => $i } @{$config{re1}} };   #Fill-in not performed, ligation junction is the original restriction site sequence without the caret
+    if ($config{nofill}) {
+        #Fill-in not performed, ligation junction is the original restriction site sequence without the caret
+        for (my $i = 0; $i < scalar(@{$config{re1}}); $i++) {
+            my $rA_cutsites = cutsite_deduce( -seq => $config{re1}->[$i] );
+            push @{$rA_ligsite}, $rA_cutsites;
+        }
     } else {
-        $rH_ligsite = fill_end( $rH_before_after_cuts );
+        $rA_ligsite = fill_end( $rA_junction_sequences );
     }
-#     $config{re1} =~ s/\^//g;         #Remove the caret from the restriction site
-    s/\^//g for @{$config{re1}};    #Remove the caret from the restriction sites
 }
 
-my @ligations_sequences = map { @{$rH_ligsite->{$_}{-seq}} } keys %{$rH_ligsite};
-my $string = join ", ", @ligations_sequences;
+my $sequences_string = "";
+for ( my $i = 0; $i < scalar(@{$config{re1}}); $i++) {
+    my $cut_string = join ' ', @{$config{re1_deduced_cut_sites}->[$i]};
+    $sequences_string .= $config{re1_name}->[$i] . " - " . $config{re1_with_caret}->[$i] . " [" . $cut_string . "], ";
+}
+$sequences_string =~ s/, $//;
+
 print "Truncating with HiCUP Truncater v$hicup_module::VERSION\n" unless ( $config{quiet} );
-print "Truncating sequences at occurrence of sequences '$string'\n" unless ( $config{quiet} );
+print "Truncating sequences at occurrence of sequences '$sequences_string'\n" unless ( $config{quiet} );
 
 #Before processing the sequence file check whether the output output files
 #(yet to be generated) don't already exist.  Doing this now means the
@@ -230,6 +235,8 @@ exit(0);
 
 sub check_re1 {
 
+    my $parameters_ok = 1;
+
     $config{re1} =~ s/\s//g;    #Edit variable (declared outside of subroutine)
     $config{re1} =~ tr/atcg/ATCG/;
     chomp $config{re1};
@@ -237,37 +244,129 @@ sub check_re1 {
     #Check restriction enzymes in correct format
     if ( $config{re1} eq '' ) {    #RE1 present
         warn "Please specify restriction enzyme (--re1)\n";
+        $parameters_ok = 0;
     }
 
     #Split re1 into multiple enzyme entries, using an array reference
     if ( $config{re1} =~ /:/ ) {
         my $rA_res = [ split( /:/, $config{re1} ) ];
         $config{re1} = $rA_res;
-    #Even if there is only one re1 enzyme specified, we still store it in an array reference
-    } elsif ( $config{re1} ne '' ) {
+    #Even if there is only one re1 enzyme specified (i.e. no ":" found), we still store it in an array reference
+    } else {
         $config{re1} = [ $config{re1} ];
     }
 
-    my %cuts = ();
-    foreach my $re1 (@{$config{re1}}) {
-        #Check this is a nucleotide sequence with a cut site
-        unless ( $re1 =~ /^[ATCG\^]+$/ ) {
-            die "The restriction site '$re1' is not a valid DNA sequence.\n";
+    #Check whether the RE names been included
+    my @re_seq = ();
+    my @re_name = ();
+    foreach my $re_string (@{$config{re1}}) {
+        if ( $re_string =~ /,/ ) {  #if "," is present, then the string contains the RE name
+            my ( $seq, $name ) = split( /,/, $re_string );
+            $seq = uc $seq;     #Standardise by converting to upper case
+            push @re_seq, $seq;
+            push @re_name, $name;
+        } else {
+            push @re_seq, uc $re_string;
+            push @re_name, 're1_unspecified';
+        }
+    }
+    $config{re1}      = \@re_seq;
+    $config{re1_name} = \@re_name;
+
+    #Check RE are in correct format
+    for ( my $i = 0; $i < scalar(@{$config{re1}}); $i++ ) {
+        unless ( $config{re1}->[$i] =~ /^[ACGTN\^]+$/ ) {
+            warn "Restriction enzyme: '$config{re1}->[$i]' should only contain the characters: 'A','G','C','T', 'N' or '^'\n";
+            $parameters_ok = 0;
         }
 
-        unless ( ( $re1 =~ tr/\^// ) == 1 ) {
-            die "The restriction site should contain one, and only one, cut position, denoted by \'^\'.\n";
+        unless ( ( $config{re1}->[$i] =~ tr/\^// ) == 1 ) {
+            warn "Restriction enzyme: '$config{re1}->[$i]' should contain one caret character ('^')\n";
+            $parameters_ok = 0;
         }
 
-        #Determine the bases up until the cut site i.e. where a truncated sequence ends
-        my ( $before_cut, $after_cut ) = split( /\^/, $re1 );
-
-        #Remove the caret ("^") symbol
-        $re1 =~ s/\^//g;
-        $cuts{$re1} = [ $before_cut, $after_cut ];
+        unless ( $config{re1_name}->[$i] =~ /^\w*$/ ) {
+            warn "The restriction enzyme name '$config{re1_name}->[$i]' should only contain alphanumeric characters\n";
+            $parameters_ok = 0;
+        }
     }
 
-    return \%cuts;
+    #Create a config term storing the sequence with the caret (the caret will be removed from the original)
+    my @re_name_with_caret = ();
+    for ( my $i = 0; $i < scalar(@{$config{re1}}); $i++ ) {
+        push @re_name_with_caret, $config{re1}->[$i];
+    }
+    $config{re1_with_caret} = \@re_name_with_caret;
+
+    unless ( $parameters_ok ) {
+        die "Please change configuration file and/or command-line parameters and/or installation accordingly\n";
+    }
+
+    my @re_caret_position = ();
+    my @cut_sites = ();
+    for ( my $i = 0; $i < scalar(@{$config{re1}}); $i++ ) {
+        #Store the caret position of re1
+        $config{re1}->[$i] =~ /\^/g;
+        my $caret_position = pos($config{re1}->[$i]) - 1;
+        push @re_caret_position, $caret_position;
+        $config{re1}->[$i] =~ s/\^//g;
+
+        #Check if current re1 cut-site contains any Ns
+        if ( $config{re1}->[$i] =~ m/N/ ) {
+            #If Ns are found, then deduce all the possible cut-sites and push them to @cut_sites as an array ref
+            my $rA_cutsites = cutsite_deduce( -seq => $config{re1}->[$i] );
+            push @cut_sites, $rA_cutsites;
+        } else {
+            #If no N, then push the current re1 cut-site still as an array ref, so each case will be treated the same way i.e. as an array
+            push @cut_sites, [ $config{re1}->[$i] ];
+        }
+    }
+    $config{re1_caret_position}    = \@re_caret_position;
+    $config{re1_deduced_cut_sites} = \@cut_sites;
+
+    my @junctions = ();
+    for ( my $i = 0; $i < scalar(@{$config{re1}}); $i++ ) {
+        #Then, for each of the deduced cut sites, build the start & end sequences of the ligation junctions
+        my @junctions_per_site = ();
+        foreach my $cutsite (@{$config{re1_deduced_cut_sites}->[$i]}) {
+            my $start_seq = substr($cutsite, 0, length($cutsite) - $config{re1_caret_position}->[$i]);
+            my $end_seq   = substr($cutsite, $config{re1_caret_position}->[$i]);
+            push @junctions_per_site, { -start => $start_seq, 
+                                        -end   => $end_seq };
+        }
+        push @junctions, \@junctions_per_site
+    }
+    $config{re1_caret_position}     = \@re_caret_position;
+    $config{re1_start_end_junction} = \@junctions;
+
+    return \@junctions;
+}
+
+####################
+#Subroutine 'cutsite_deduce':
+#processes the $seq variable, creating 4 new sequences by replacing Ns by A, C, T and G
+#also handles multiple Ns cases with a recursive call
+sub cutsite_deduce {
+    my %arg = @_;
+    my $seq = $arg{-seq};
+
+    my $rA_deducted_seq = [];
+
+    
+    foreach my $nuc ('A', 'C', 'T', 'G') {
+        #Replace N by $nuc
+        (my $newseq = $seq) =~ s/N/$nuc/i;
+        #Check for remaining Ns within $newseq
+        if ( $newseq =~ m/N/ ) {
+            my $rA_new_deducted_seq = cutsite_deduce( -seq => $newseq );
+            #   $rA_deducted_seq = [ map { push @{$rA_deducted_seq}, $_ } @{$rA_new_deducted_seq} ];
+            do { push @{$rA_deducted_seq}, $_ } foreach(@{$rA_new_deducted_seq});
+        } else {
+            push @{$rA_deducted_seq}, $newseq;
+        }
+    }
+
+    return $rA_deducted_seq;
 }
 
 #######################
@@ -278,50 +377,24 @@ sub check_re1 {
 #sequence will be: A + GATC + GATC + T = AGATCGATCT.
 sub fill_end {
 
-    my %before_after_cuts = %{$_[0]};
-
-    my %ligation_sequences = ();
-    foreach my $rest_site (keys %before_after_cuts) {
-        my ($beforeCut, $afterCut) = @{$before_after_cuts{$rest_site}};
-#        my $rest_seq = $rest_site;
-#        $rest_seq =~ s/\^//g;
-
-        my $five_prime_flank;     #Sequence upstream of the cut site
-        my $fill_in;              #Sequence created by filling-in the overhang
-        my $three_prime_flank;    #Sequence downstream of the cut site
-
-        #Determine the "fill-in" sequence
-        my $number_bases_before_cut = length $beforeCut;
-        my $number_bases_after_cut = length $afterCut;
-
-        my $flank_size;
-        if ( $number_bases_before_cut > ( length($rest_site) / 2 ) ) {    #Is the flanking sequence the length of the sequence BEFORE or AFTER the cut?
-            $flank_size = $number_bases_after_cut;
-        } else {
-            $flank_size = $number_bases_before_cut;
+    my @junction_sequences = @{$_[0]};
+    my @ligation_sequences;
+    for ( my $i = 0; $i < scalar(@junction_sequences); $i++ ) {
+        my @ligation_sequences_per_site = ();
+        foreach my $rH_junction1 (@{$junction_sequences[$i]}) {
+            for ( my $j = 0; $j < scalar(@junction_sequences); $j++ ) {
+                foreach my $rH_junction2 (@{$junction_sequences[$j]}) {
+                    my $ligation_sequence = $rH_junction1->{-start} . $rH_junction2->{-end};    #Potentially new sequence created at the ligation interface
+                    push @ligation_sequences_per_site, $ligation_sequence;
+#                     print $config{re1_name}->[$i] . "\t" . $ligation_sequence . "\n";
+                }
+            }
         }
-
-        $five_prime_flank = substr( $rest_site, 0, $flank_size );
-        $three_prime_flank = substr( $afterCut, ( $flank_size - ( 2 * $flank_size ) ) );
-        $fill_in = substr( $rest_site, $flank_size, ( length($rest_site) - ( 2 * $flank_size ) ) );
-
-        my $start_seq = $five_prime_flank . $fill_in;
-        my $end_seq = ( $flank_size ) ? $fill_in . $three_prime_flank : $three_prime_flank ;
-        $ligation_sequences{$rest_site} = {
-            -start => $start_seq,
-            -end   => $end_seq
-        };
+        push @ligation_sequences, \@ligation_sequences_per_site;
     }
+    $config{re1_ligation_sequences} = \@ligation_sequences;
 
-    foreach my $rest_site1 (keys %ligation_sequences) {
-        foreach my $rest_site2 (keys %ligation_sequences) {
-            my $ligation_sequence = $ligation_sequences{$rest_site1}{-start} . $ligation_sequences{$rest_site2}{-end};    #Potentially new sequence created at the ligation interface
-            push @{$ligation_sequences{$rest_site1}{-seq}}, $ligation_sequence;
-            print $rest_site1 . "\t" . $ligation_sequence . "\n";
-        }
-    }
-
-    return \%ligation_sequences;
+    return \@ligation_sequences;
 }
 
 ###########################
@@ -349,13 +422,6 @@ sub process_file {
 
     print "Truncating $inputfile\n" unless ( $config{quiet} eq '1' );
 
-    #Open the output file
-    #my $outputfile;
-
-    #($outputfile = $inputfile) =~ s/\.gz$|\.bz2$//;
-    #$outputfile =~ s/^.+\///;    #Remove folder references
-    #$outputfile =~ s/\.fq|\.fastq$//; #Remove .fq or .fastq file extension
-    #$outputfile .= "_trunc";
     my $outputfile = fileNamer( $inputfile, \%config, 'truncater' );
 
     $outputfile = $config{outdir} . $outputfile;
@@ -415,15 +481,15 @@ sub process_file {
                 #Finds the ligation site, if present, and truncates accordingly
                 #(swapping the ligation sequence for the restriction site up until the cut site).
                 #Counts the sequences truncated/not-truncated.
-                my @ligations_sequences = map { @{$rH_ligsite->{$_}{-seq}} } keys %{$rH_ligsite};
-                my $string = join "|", @ligations_sequences;
+
+                my $string = join "|", map { @{$_} } @{$rA_ligsite};
 
                 if ( $line2 =~ /($string)/ ) {
                     my $ligsite = $1;
                     my $re1;
-                    foreach my $rest_site (@{$config{re1}}) {
-                        if ( grep $_ eq $ligsite, @{$rH_ligsite->{$rest_site}{-seq}} ) {
-                            ($re1 = $rest_site) =~ s/\^//g;
+                    for (my $i = 0; $i < scalar(@{$config{re1}}); $i++) {
+                        if ( grep $_ eq $ligsite, @{$rA_ligsite->[$i]} ) {
+                            $re1 = $config{re1}->[$i];
                            last;
                         }
                     }
@@ -439,6 +505,8 @@ sub process_file {
                     } else {
                         $not_truncated++;
                     }
+                } else {
+                    $not_truncated++;
                 }
             }
             print OUT $line1 . $line2 . "\n" . $line3 . $line4 . "\n";
