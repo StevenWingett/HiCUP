@@ -154,7 +154,7 @@ if ( $config{seq_trunc} eq '' ) {   #$origseq and $before_cut only required if H
     s/\^//g for @{$config{re1}};    #Remove the caret from the restriction sites
 }
 
-my @ligations_sequences = map { @{$rH_ligsite->{$_}} } keys %{$rH_ligsite};
+my @ligations_sequences = map { @{$rH_ligsite->{$_}{-seq}} } keys %{$rH_ligsite};
 my $string = join ", ", @ligations_sequences;
 print "Truncating with HiCUP Truncater v$hicup_module::VERSION\n" unless ( $config{quiet} );
 print "Truncating sequences at occurrence of sequences '$string'\n" unless ( $config{quiet} );
@@ -281,41 +281,43 @@ sub fill_end {
     my %before_after_cuts = %{$_[0]};
 
     my %ligation_sequences = ();
-    foreach my $before_key (keys %before_after_cuts) {
-        foreach my $after_key (keys %before_after_cuts) {
-            my $beforeCut = $before_after_cuts{$before_key}[0];
-            my $afterCut = $before_after_cuts{$after_key}[1];
+    foreach my $rest_site (keys %before_after_cuts) {
+        my ($beforeCut, $afterCut) = @{$before_after_cuts{$rest_site}};
+#        my $rest_seq = $rest_site;
+#        $rest_seq =~ s/\^//g;
 
-            my $five_prime_flank;     #Sequence upstream of the cut site
-            my $fill_in;              #Sequence created by filling-in the overhang
-            my $three_prime_flank;    #Sequence downstream of the cut site
-            my $ligation_sequence;    #Potentially new sequence created at the ligation interface
+        my $five_prime_flank;     #Sequence upstream of the cut site
+        my $fill_in;              #Sequence created by filling-in the overhang
+        my $three_prime_flank;    #Sequence downstream of the cut site
 
-            #Determine the "fill-in" sequence
-            my $number_bases_before_cut = length $before_after_cuts{$before_key}[0];
-            my $number_bases_after_cut = length $before_after_cuts{$before_key}[1];
-            my $flank_size;
+        #Determine the "fill-in" sequence
+        my $number_bases_before_cut = length $beforeCut;
+        my $number_bases_after_cut = length $afterCut;
 
-            if ( $number_bases_before_cut > ( length($before_key) / 2 ) ) {    #Is the flanking sequence the length of the sequence BEFORE or AFTER the cut?
-                $flank_size = $number_bases_after_cut;
-            } else {
-                $flank_size = $number_bases_before_cut;
-            }
+        my $flank_size;
+        if ( $number_bases_before_cut > ( length($rest_site) / 2 ) ) {    #Is the flanking sequence the length of the sequence BEFORE or AFTER the cut?
+            $flank_size = $number_bases_after_cut;
+        } else {
+            $flank_size = $number_bases_before_cut;
+        }
 
-            $five_prime_flank = substr( $before_key, 0, $flank_size );
-            $three_prime_flank = substr( $afterCut, ( $flank_size - ( 2 * $flank_size ) ) );
-            $fill_in = substr( $before_key, $flank_size, ( length($before_key) - ( 2 * $flank_size ) ) );
+        $five_prime_flank = substr( $rest_site, 0, $flank_size );
+        $three_prime_flank = substr( $afterCut, ( $flank_size - ( 2 * $flank_size ) ) );
+        $fill_in = substr( $rest_site, $flank_size, ( length($rest_site) - ( 2 * $flank_size ) ) );
 
-            #Deduce the ligation sequence.  If the restriction enzyme cuts immediately adjacent
-            #to the restriction site the fill-in region is the same as the flanking region and
-            #so the fill-in region only needs to be included once.
-            if ($flank_size) {
-                $ligation_sequence = $five_prime_flank . $fill_in . $fill_in . $three_prime_flank;
-            } else {
-                $ligation_sequence = $five_prime_flank . $fill_in . $three_prime_flank;
-            }
-            push @{$ligation_sequences{$before_key}}, $ligation_sequence;
-            print $before_key . "\t" . $ligation_sequence . "\n";
+        my $start_seq = $five_prime_flank . $fill_in;
+        my $end_seq = ( $flank_size ) ? $fill_in . $three_prime_flank : $three_prime_flank ;
+        $ligation_sequences{$rest_site} = {
+            -start => $start_seq,
+            -end   => $end_seq
+        };
+    }
+
+    foreach my $rest_site1 (keys %ligation_sequences) {
+        foreach my $rest_site2 (keys %ligation_sequences) {
+            my $ligation_sequence = $ligation_sequences{$rest_site1}{-start} . $ligation_sequences{$rest_site2}{-end};    #Potentially new sequence created at the ligation interface
+            push @{$ligation_sequences{$rest_site1}{-seq}}, $ligation_sequence;
+            print $rest_site1 . "\t" . $ligation_sequence . "\n";
         }
     }
 
@@ -326,10 +328,7 @@ sub fill_end {
 #Subroutine "process_file":
 #Truncates DNA sequences containing the putative Hi-C ligation sequence
 sub process_file {
-   # my %args = @_;
     my $inputfile   = $_[0];
-  #  my $re1         = $args{-re};
-  #  my $ligsite     = $args{-ligseq};
 
     #Create variables for counting the number of sequences truncated/not truncated
     my $reads_processed = 0;
@@ -416,15 +415,15 @@ sub process_file {
                 #Finds the ligation site, if present, and truncates accordingly
                 #(swapping the ligation sequence for the restriction site up until the cut site).
                 #Counts the sequences truncated/not-truncated.
-                my @ligations_sequences = map { @{$rH_ligsite->{$_}} } keys %{$rH_ligsite};
+                my @ligations_sequences = map { @{$rH_ligsite->{$_}{-seq}} } keys %{$rH_ligsite};
                 my $string = join "|", @ligations_sequences;
 
                 if ( $line2 =~ /($string)/ ) {
                     my $ligsite = $1;
                     my $re1;
                     foreach my $rest_site (@{$config{re1}}) {
-                        if ( grep $_ eq $ligsite, @{$rH_ligsite->{$rest_site}} ) {
-                            $re1 = $rest_site;
+                        if ( grep $_ eq $ligsite, @{$rH_ligsite->{$rest_site}{-seq}} ) {
+                            ($re1 = $rest_site) =~ s/\^//g;
                            last;
                         }
                     }
