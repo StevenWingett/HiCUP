@@ -523,8 +523,10 @@ COMMAND LINE OPTIONS
 
 --re1           Restriction enzyme used to digest the genome (the enzyme that forms the
                 ligation junction) e.g. A^GATCT,BglII. 
-                Some Hi-C protocols may use two enzymes at this stage.
-                To specify two enzymes: -1 A^GATCT,BglII:A^AGCTT,HindIII.
+                Some Hi-C protocols may use several enzymes.
+                To specify several enzymes, use the ":" to separate them
+                e.g. A^GATCT,BglII:A^AGCTT,HindIII:^GATC,DpnII.
+                HiCUP accomodates N in restriction enzyme: e.g. :A^ANCTT
 --re2           To specify a restriction enzyme instead of sonication to shorten
                 di-tags. This restriction site does NOT form a Hi-C ligation 
                 junction. 2 e.g. AG^CT,AluI. Typically the sonication

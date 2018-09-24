@@ -606,10 +606,13 @@ COMMAND LINE OPTIONS
 --help           Print program help and exit
 --nofill         Hi-C protocol did NOT include a fill-in of sticky ends prior to 
                  re-ligation and therefore reads shall be truncated at
-                 the restriction site sequence
+                 the restriction site sequence. This feature is only supported for 
+                 single restriction enzyme Hi-C.
 --outdir         Directory to write output files
 --quiet          Suppress all progress reports
---re1            Restriction enzyme recognition sequence
+--re1            Restriction enzyme recognition sequence. e.g. A^GATCT,BglII
+                 HiCUP can accomodate more than one enzyme and N nucleotides
+                 e.g. A^GATCT,BglII:A^AGCTT,HindIII:^GANTC,myRE.
 --sequences      Instead of specifying a restriction enzyme recognition sequence,
                  specify the ligation sequences directly
 --threads        Number of threads to use, allowing simultaneous processing  of 
