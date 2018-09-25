@@ -144,11 +144,12 @@ checkR( \%config );
 my $rA_ligsite;
 if ( $config{seq_trunc} eq '' ) {   #$origseq and $before_cut only required if Hi-C ligation junction determined computationally
     if ($config{nofill}) {
-        #Fill-in not performed, ligation junction is the original restriction site sequence without the caret
-        for (my $i = 0; $i < scalar(@{$config{re1}}); $i++) {
-            my $rA_cutsites = cutsite_deduce( -seq => $config{re1}->[$i] );
-            push @{$rA_ligsite}, $rA_cutsites;
+        unless ( scalar(@{$config{re1}} == 0 ) {
+            die "'nofill' option is not supported for multiple restriction enzyme digestion...\n"
         }
+        #Fill-in not performed, ligation junction is the original restriction site sequence without the caret
+        my $rA_cutsites = cutsite_deduce( -seq => $config{re1}->[0] );
+        push @{$rA_ligsite}, $rA_cutsites;
     } else {
         $rA_ligsite = fill_end( $rA_junction_sequences );
     }
