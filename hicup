@@ -249,7 +249,6 @@ if ( $config{sequence} ne '' ) {
     }
     my ($re1, $re2) = ($1, $2);
 
-
     while ($re1 =~ m/(.+)\s\[(.+)\]/g) {
         my ($enz_name, $rest_site) = ($1, $2);
         unless ( $rest_site =~ /^[ATCGN\^]+$/ ) {
