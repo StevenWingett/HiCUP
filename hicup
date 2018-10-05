@@ -249,8 +249,8 @@ if ( $config{sequence} ne '' ) {
     }
     my ($re1, $re2) = ($1, $2);
 
-    while ($re1 =~ m/(.+)\s\[(.+)\]/g) {
-        my ($enz_name, $rest_site) = ($1, $2);
+    while ($re1 =~ m/((\S+)\s\[(\S+)\])/g) {
+        my ($enz_name, $rest_site) = ($2, $3);
         unless ( $rest_site =~ /^[ATCGN\^]+$/ ) {
             die "The restriction site ($rest_site) of $enz_name needs to be a valid DNA sequence\n";
         }
