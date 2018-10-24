@@ -155,12 +155,12 @@ if ( $config{seq_trunc} eq '' ) {   #$origseq and $before_cut only required if H
     }
 }
 
-my $sequences_string = "";
-for ( my $i = 0; $i < scalar(@{$config{re1}}); $i++) {
-    my $cut_string = join ' ', @{$config{re1_deduced_cut_sites}->[$i]};
-    $sequences_string .= $config{re1_name}->[$i] . " - " . $config{re1_with_caret}->[$i] . " [" . $cut_string . "], ";
+my $sequences_string = "[";
+foreach my $ligation_site (@{$rA_ligsite}) {
+    $sequences_string .= join ", ", @{$ligation_site};
+    $sequences_string .= ", ";
 }
-$sequences_string =~ s/, $//;
+$sequences_string =~ s/, $/]/;
 
 print "Truncating with HiCUP Truncater v$hicup_module::VERSION\n" unless ( $config{quiet} );
 print "Truncating sequences at occurrence of sequences '$sequences_string'\n" unless ( $config{quiet} );
