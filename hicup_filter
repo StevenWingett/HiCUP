@@ -340,24 +340,34 @@ sub process_digest_file {
         }
 
     } else {    #Double-digest protocol
+        #First check if re1 & re2 have only a single enzyme each
+        unless ( $first_line =~ /.+\tRestriction_Enzyme1:(.+\[.+\])\tRestriction_Enzyme2:(.+\[.+\])\t.+/ ) {
+            die "Genome digest file $config{digest} is not in the correct format.\n";
+        }
+        my ($re1, $re2) = ($1, $2);
+        my ($re1count, $re2count) = (0, 0);
+        $re1count++ while ($re1 =~ m/(\S+)\s\[(\S+)\]/g);
+        $re2count++ while ($re2 =~ m/(\S+)\s\[(\S+)\]/g);
+        if ($re1count > 1 || $re2count > 1) {
+            die "Double-digest protocol does not support multiple enzyme digestion...\nPlease ensure you are using only one enzyme for RE1 as well as only one enzyme for RE2.\n"
+        }
 
         #Determine the sequences of re1 and re2
         unless ( $first_line =~ /.+\t.+\[(.+)\]\t.+\[(.+)\]/ ) {
             die "Genome digest file $config{digest} is not in the correct format.\n";
         }
-
         $config{re1} = $1;    #Declared as a global variable
         $config{re2} = $2;    #Declared as a global variable
 
         print "Double digest protocol followed using $config{re1} and then $config{re2}\n" unless $config{quiet};
 
-        unless ( $config{re1} =~ /^[ATCG\^]+$/ ) {
+        unless ( $config{re1} =~ /^[ATCGN\^]+$/ ) {
             die "The restriction site (re1) needs to be a valid DNA sequence.\n";
         }
         unless ( ( $config{re1} =~ tr/\^// ) == 1 ) {
             die "The restriction site (re1) should contain one cut position, denoted by '^'.\n";
         }
-        unless ( $config{re2} =~ /^[ATCG\^]+$/ ) {
+        unless ( $config{re2} =~ /^[ATCGN\^]+$/ ) {
             die "The restriction site (re2) needs to be a valid DNA sequence.\n";
         }
         unless ( ( $config{re2} =~ tr/\^// ) == 1 ) {

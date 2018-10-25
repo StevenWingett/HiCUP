@@ -238,22 +238,46 @@ if ( $1 eq "Restriction_Enzyme2:None" ) {    #Sonication protocol
     $sonication_protocol = 1;
 }
 
+my ($re1_string, $re2_string) = ('', '');
 if ( $config{sequence} ne '' ) {
     $config{re1} = '';
 } else {
     print "Reading genome digest file '$config{digest}' to determine Hi-C restriction enzyme\n" unless $config{quiet};
 
-    unless ( $header_line =~ /^.+\tRestriction_Enzyme1:\S+\s\[(.+?)\]\t.+/ ) {
+    unless ( $header_line =~ /^.+\tRestriction_Enzyme1:(.+\[.+\])+\tRestriction_Enzyme2:(.+)\t.+/ ) {
         die "Genome digest file $config{digest} is not in the correct format.\n";
     }
+    my ($re1, $re2) = ($1, $2);
 
-    $config{re1} = $1;
-
-    unless ( $config{re1} =~ /^[ATCG\^]+$/ ) {
-        die "The restriction site (re1) needs to be a valid DNA sequence\n";
+    while ($re1 =~ m/((\S+)\s\[(\S+)\])/g) {
+        my ($enz_name, $rest_site) = ($2, $3);
+        unless ( $rest_site =~ /^[ATCGN\^]+$/ ) {
+            die "The restriction site ($rest_site) of $enz_name needs to be a valid DNA sequence\n";
+        }
+        unless ( ( $rest_site =~ tr/\^// ) == 1 ) {
+            die "The restriction site ($rest_site) of $enz_name should contain one cut position, denoted by '^'.\n";
+        }
+        $re1_string .= $rest_site . "," . $enz_name . ":";
     }
-    unless ( ( $config{re1} =~ tr/\^// ) == 1 ) {
-        die "The restriction site (re1) should contain one cut position, denoted by '^'.\n";
+    $re1_string =~ s/\:$//;
+    $config{re1} = ($re1_string =~ /:/) ? "Restriction enzymes: " . $re1 : "Restriction enzyme: " . $re1;
+
+    if ($re2 ne "None" ) {
+        unless ($re2 =~ /((.+)\s\[(.+?)\])+/) {
+            die "The restriction enzyme 2 $re2 is not in the correct format.\n";
+        }
+        while ($re2 =~ /((\S+)\s\[(\S+)\])/g) {
+            my ($enz_name, $rest_site) = ($2, $3);
+            unless ( $rest_site =~ /^[ATCGN\^]+$/ ) {
+                die "The restriction site ($rest_site) of $enz_name needs to be a valid DNA sequence\n";
+            }
+            unless ( ( $rest_site =~ tr/\^// ) == 1 ) {
+                die "The restriction site ($rest_site) of $enz_name should contain one cut position, denoted by '^'.\n";
+            }
+            $re2_string .= $rest_site . "," . $enz_name . ":";
+        }
+        $re2_string =~ s/\:$//;
+        $config{re1} .= ($re2_string =~ /:/) ? " - Sonication enzymes: " . $re2 : " - Sonication enzyme: " . $re2;
     }
 }
 close DIGEST;
@@ -271,7 +295,7 @@ if ( $config{longest} ne '' ) {
 my $outdir_flag = '';
 $outdir_flag       = "--outdir $config{outdir}"     if ( $config{outdir} );           #This is the flag, not outdir
 $config{nofill}    = "--nofill"                     if ( $config{nofill} ne '' );
-$config{re1}       = "--re1 $config{re1}"           if ( $config{re1} ne '' );
+$re1_string        = "--re1 $re1_string"            if ( $re1_string ne '' );
 $config{seq_trunc} = "--sequence $config{sequence}" if ( $config{sequence} ne '' );
 if ( $config{shortest} ne '' ) {
     $config{shortest} = "--shortest $config{shortest}";
@@ -297,17 +321,17 @@ my $truncater_version;    #Stores the truncater version number
 $truncater_version = `$Bin/hicup_truncater -v` or die "Can't run hicup_truncater to determine version number\n.";
 
 if ( $config{zip} ) {
-    !system("$Bin/hicup_truncater $config{r} $datestamp_flag $config{nofill} $outdir_flag $config{quiet} $config{re1} $config{sequence} $config{threads} $config{zip} $filenames_string")
+    !system("$Bin/hicup_truncater $config{r} $datestamp_flag $config{nofill} $outdir_flag $config{quiet} $re1_string $config{sequence} $config{threads} $config{zip} $filenames_string")
       or die "Can't run hicup_truncater\n.";
 } else {
-    !system("$Bin/hicup_truncater $config{r} $datestamp_flag $config{nofill} $outdir_flag $config{quiet} $config{re1} $config{sequence} $config{threads} $filenames_string")
+    !system("$Bin/hicup_truncater $config{r} $datestamp_flag $config{nofill} $outdir_flag $config{quiet} $re1_string $config{sequence} $config{threads} $filenames_string")
       or die "Can't run hicup_truncater\n.";
 }
 
 #Map and pair sequences
 my $ligation = "\@PG\tID:HiCUP Truncater\tVN:" . $hicup_module::VERSION;       #Create the hidden ligation flag to send to HiCUP mapper to print the hicup_truncation settings to the output file
 if ( $config{re1} ) {
-    $ligation = $ligation . "\tDS:\"" . "Restriction enzyme $config{re1}\"";
+    $ligation = $ligation . "\tDS:\"" . "$config{re1}\"";
 } else {
     $ligation = $ligation . "\tDS\"" . "Ligation junction sequences $config{sequence}\"";
 }

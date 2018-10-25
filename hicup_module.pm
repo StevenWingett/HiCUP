@@ -3,7 +3,7 @@ require Exporter;
 
 our @ISA    = qw (Exporter);
 our @EXPORT = qw(VERSION hasval deduplicate_array checkR process_config check_files_exist
-  datestampGenerator print_example_config_file fileNamer arrayAppend versioner calc_perc);
+  datestampGenerator print_example_config_file fileNamer arrayAppend versioner calc_perc cutsite_deduce);
 
 our @EXPORT_OK = qw(hashVal outdirFileNamer check_no_duplicate_filename check_filenames_ok 
     checkAligner checkAlignerIndices newopen quality_checker determineAlignerFormat);
@@ -1036,6 +1036,35 @@ sub calc_perc {
 
     
     return $pc;
+}
+
+
+####################
+#Subroutine 'cutsite_deduce':
+#processes the $seq variable, creating 4 new sequences by replacing Ns by A, C, T and G
+#also handles multiple Ns cases with a recursive call
+sub cutsite_deduce {
+    my %arg = @_;
+    my $seq = $arg{-seq};
+
+    my $rA_deducted_seq = [];
+
+    
+    foreach my $nuc ('A', 'C', 'T', 'G') {
+        #Replace N by $nuc
+        (my $newseq = $seq) =~ s/N/$nuc/i;
+
+        #Check for remaining Ns within $newseq
+        if ( $newseq =~ m/N/ ) {
+            my $rA_new_deducted_seq = cutsite_deduce( -seq => $newseq );
+            #   $rA_deducted_seq = [ map { push @{$rA_deducted_seq}, $_ } @{$rA_new_deducted_seq} ];
+            do { push @{$rA_deducted_seq}, $_ } foreach(@{$rA_new_deducted_seq});
+        } else {
+            push @{$rA_deducted_seq}, $newseq;
+        }
+    }
+
+    return $rA_deducted_seq;
 }
 
 
