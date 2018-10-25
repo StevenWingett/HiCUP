@@ -1,3 +1,17 @@
+RELEASE NOTES FOR HICUP V0.7.0 (26 October 2018)
+----------------------------------------------
+
+HiCUP v0.7.0 is a major update incorporating the changes described below:
+
+HiCUP can now process restriction enzymes that cut at different sites.
+Such sequences contain an "N" within the restriction enzyme recognition
+site to denote the four bases (AGCT).
+
+Thanks to Rola Dali, Edouard Henrion and Mathieu Bourgey (McGill University) 
+for adding this feature. 
+
+
+
 RELEASE NOTES FOR HICUP V0.6.1 (10 May 2018)
 ----------------------------------------------
 
