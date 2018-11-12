@@ -1172,7 +1172,7 @@ SYNOPSIS
 
 hicup is used to run the whole HiCUP pipeline
 
-hicup [OPTIONS]... -config [CONFIGURATION FILE]...
+hicup [OPTIONS]... --config [CONFIGURATION FILE]...
 hicup [OPTIONS]... [FILES]
 
 FUNCTION

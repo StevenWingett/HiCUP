@@ -8,7 +8,7 @@ our @EXPORT = qw(VERSION hasval deduplicate_array checkR process_config check_fi
 our @EXPORT_OK = qw(hashVal outdirFileNamer check_no_duplicate_filename check_filenames_ok 
     checkAligner checkAlignerIndices newopen quality_checker determineAlignerFormat);
 
-our $VERSION = "0.7.0";
+our $VERSION = "0.7.0.devel";
 
 use Data::Dumper;
 use strict;
@@ -466,6 +466,8 @@ sub datestampGenerator {
         $now[2], $now[1],     $now[0],
         $now[3], $now[4] + 1, $now[5] + 1900
     );
+	
+	$datestamp = generateRandomString(10) . '_' . $datestamp;    #Add random string to datestamp
     return $datestamp;
 }
 
@@ -1066,6 +1068,29 @@ sub cutsite_deduce {
 
     return $rA_deducted_seq;
 }
+
+
+
+####################
+#Create a random letter string
+#Takes a number for the length of
+#the string and returns the string
+sub generateRandomString{
+	my $length = $_[0];
+	
+	my @chars = ("A".."Z", "a".."z");
+	my $string;
+	$string .= $chars[rand @chars] for 1..$length;
+	
+	return $string;
+}
+
+
+
+
+
+
+
 
 
 
