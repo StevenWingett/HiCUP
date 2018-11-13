@@ -1,5 +1,15 @@
+RELEASE NOTES FOR HICUP V0.7.1 (12 November 2018)
+-------------------------------------------------
+
+HiCUP v0.7.1 is a minor update incorporating the changes described below:
+
+-Added the option --arima to HiCUP Digester, to generate digest files 
+compatible with the Arima protocol.
+
+
+
 RELEASE NOTES FOR HICUP V0.7.0 (26 October 2018)
-----------------------------------------------
+------------------------------------------------
 
 HiCUP v0.7.0 is a major update incorporating the changes described below:
 
