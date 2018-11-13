@@ -35,6 +35,7 @@ use Data::Dumper;
 #Get user-supplied parameters
 #Option variables
 my %config = (
+	arima  	 => '',
     config   => '',
     example  => '',
     genome   => '',
@@ -51,6 +52,7 @@ my %config = (
 );
 
 my $config_result = GetOptions(
+	"arima"    => \$config{arima},
     "re1=s"    => \$config{re1},
     "re2=s"    => \$config{re2},
     "config=s" => \$config{config},
@@ -261,6 +263,15 @@ sub check_parameters {
         $config{outdir} = './';
     }
 
+	if( ($config{re1} ne '') and ($config{arima} ne '') ){
+		warn "The options --re1 and --arima may not be specified together\n";
+		$parameters_ok = 0;
+	}
+	
+	if($config{arima}){
+			$config{re1} = '^GATC,DpnII:G^ANTC,Arima';
+	}
+	
     #Check restriction enzymes in correct format
     if ( $config{re1} eq '' ) {    #RE1 present
         warn "Please specify at least one restriction enzyme 1 (--re1)\n";
@@ -493,8 +504,10 @@ passed to the script by a configuration file or command line arguments.
 
 COMMAND LINE OPTIONS
 
---re1           Restriction enzyme used to digest the genome (the enzyme that forms the
-                ligation junction) e.g. A^GATCT,BglII. 
+--arima         Set the --re1 option to that used by the Arima protocol: 
+                ^GATC,DpnII:G^ANTC,Arima
+--re1           Restriction enzyme used to digest the genome (the enzyme 
+                that forms the ligation junction) e.g. A^GATCT,BglII. 
                 Some Hi-C protocols may use several enzymes.
                 To specify several enzymes, use the ":" to separate them
                 e.g. A^GATCT,BglII:A^AGCTT,HindIII:^GATC,DpnII.

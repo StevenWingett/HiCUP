@@ -167,10 +167,10 @@ Use a text editor to edit the configuration file as required, such as in the fol
     Format: Sanger 
 
     #Maximum di-tag length (optional parameter)
-    Longest: 800
+    Longest: 700
 
     #Minimum di-tag length (optional parameter)
-    Shortest: 150
+    Shortest: 100
 
     #FASTQ files to be analysed, placing paired files on adjacent lines
     s_1_1_sequence.txt
@@ -500,7 +500,7 @@ The names of the files to be processed and other parameters may be passed to the
 
 **Command Line Example**  ::
 
-	hicup_filter --digest Digest: Digest_Mouse_Genome_BglII_AluI_11-12-29_08-02-2012.txt --longest 800 --shortest 150
+	hicup_filter --digest Digest_Mouse_Genome_BglII_AluI_11-12-29_08-02-2012.txt --longest 800 --shortest 150
 
 The program writes valid Hi-C read pairs to a file named the same as the original, but suffixed with '.filt.sam' or '.filt.bam'.  Rejected paired sequences are written to different files in a separate date-stamped folder e.g. hicup_filter_ditag_rejects_08-59-17_30-01-2015.
 
@@ -669,7 +669,8 @@ Important note: use the **same** FASTA files to generate the digested reference 
 
 Command Line Options
 ====================
-
+    --arima     Set the --re1 option to that used by the Arima protocol:
+                ^GATC,DpnII:G^ANTC,Arima
     --re1       Restriction enzyme used to digest the genome (the enzyme that 
                 forms the ligation junction) e.g. A^GATCT,BglII.  Some Hi-C protocols may use two enzymes at this stage.  To specify two enzymes: -1 A^GATCT,BglII:A^AGCTT,HindIII.
     --re2       To specify a restriction enzyme instead of sonication to
@@ -732,6 +733,16 @@ Execute HiCUP with the command:
 ``hicup --config [Configuration Filename]``
 
 
+###############
+Arima Protocol
+###############
+`Arima Genomics <https://arimagenomics.com>`_ has developed a Hi-C kit. HiCUP is compatible with the Arima protocol, simply generate the relevant HiCUP Digest file with the command: 
+
+``hicup_digester --genome [Genome Name] --arima [FASTA files]``
+
+This is all that is additionally required to process an Arima Hi-C dataset.
+
+
 ##########
 References
 ##########
@@ -741,14 +752,32 @@ Documentation references
 Lieberman-Aiden et al. (2009) Comprehensive mapping of long-range interactions reveals folding principles of the human genome. Science (326), 289-293
 
 
+Research that used HiCUP
+************************
 
-Papers citing HiCUP
-*******************
+Schoenfelder S, et al. (2018) Divergent wiring of repressive and active chromatin interactions between mouse embryonic and trophoblast lineages.  Nat Commun, 9(1):4189
+
+Koohy H, et al. (2018) Genome organization and chromatin analysis identify transcriptional downregulation of insulin-like growth factor signaling as a hallmark of aging in developing B cells. Genome Biol, 5;19(1):126
+
+Aitken SJ, et al. (2018) CTCF maintains regulatory homeostasis of cancer pathways. Genome Biol. 7;19(1):106.
+
+Schoenfelder S, el al. (2018)  Promoter Capture Hi-C: High-resolution, Genome-wide Profiling of Promoter Interactions. J Vis Exp. 28;(136).
+
+Montefiori LE, et al. (2018) A promoter interaction map for cardiovascular disease genetics. Elife. 2018 Jul 10;7. pii: e35788.
+
+Choy MK, et al. (2018) Promoter interactome of human embryonic stem cell-derived cardiomyocytes connects GWAS regions to cardiac gene networks. Nat Commun. 28;9(1):2526.
+
+Zhao YT, et al. (2018) Long genes linked to autism spectrum disorders harbor broad enhancer-like chromatin domains. 28(7):933-942
+
+Pan DZ, et al. Integration of human adipocyte chromosomal interactions with adipose gene expression prioritizes obesity-related genes from GWAS. Nat Commun. 17;9(1):1512.
+
 Baxter JS, et al. (2018) Capture Hi-C identifies putative target genes at 33 breast cancer risk loci. Nat Commun. 9(1), 1028, doi: 10.1038/s41467-018-03411-9
 
 Novo CL, et al. (2018) Long-Range Enhancer Interactions Are Prevalent in Mouse Embryonic Stem Cells and Are Reorganized upon Pluripotent State Transition Cell Rep. 22(10), 2615-2627
 
-Rennie S, et al. (2018) Transcriptional decomposition reveals active chromatin architectures and cell specific regulatory interactions. Nat Commun 9(1), 487
+Rennie S, et al. (2018) Transcriptional decomposition reveals active chromatin architectures and cell specific regulatory interactions. Nat Commun 9(1), 487.
+
+Thomas S, Whalen S, Warburton A, Fernandez SG, McBride AA, Pollard KS, Miranda JJL.
 
 Burren OS, et al. (2017) Chromosome contacts in activated T cells identify autoimmune disease candidate genes. Genome Biol. 18(1), 165 doi: 10.1186/s13059-017-1285-0
 
@@ -805,6 +834,15 @@ Schoenfelder, S. et al. (2015) The pluripotent regulatory circuitry connecting p
 Chandra, T. et al. (2015) Global Reorganization of the Nuclear Landscape in Article Global Reorganization of the Nuclear Landscape in Senescent Cells. Cell Reports, 10(4), 1–13
 
 Dryden, N. H. et al. (2014) Unbiased analysis of potential targets of breast cancer susceptibility loci by Capture Hi-C. Genome Research, 24(11), 1854-1868
+
+
+#################
+Acknowledgements
+#################
+
+HiCUP was written by Steven Wingett (Bioinformatics Group, Babraham Institue, Cambridge, UK).
+
+Rola Dali, Edouard Henrion and Mathieu Bourgey (McGill University, Canada) assisted with making HiCUP compatible with the Arima protocol.
 
 
 #############
