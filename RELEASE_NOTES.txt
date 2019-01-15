@@ -1,3 +1,12 @@
+RELEASE NOTES FOR HICUP V0.7.2 (15 January 2018)
+------------------------------------------------
+
+HiCUP v0.7.2 is a minor update incorporating the changes described below:
+
+-Fixed bug causing output files to not strictly adhere to SAM/BAM format. 
+
+
+
 RELEASE NOTES FOR HICUP V0.7.1 (12 November 2018)
 -------------------------------------------------
 
