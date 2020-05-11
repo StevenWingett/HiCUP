@@ -170,7 +170,7 @@ Use a text editor to edit the configuration file as required, such as in the fol
     Longest: 700
 
     #Minimum di-tag length (optional parameter)
-    Shortest: 100
+    Shortest: 50
 
     #FASTQ files to be analysed, placing paired files on adjacent lines
     s_1_1_sequence.txt
@@ -263,10 +263,10 @@ The designated configuration file sets the parameters for the whole pipeline. Th
     Format: Sanger 
 
     #Maximum di-tag length (optional parameter)
-    Longest: 800
+    Longest: 700
 
     #Minimum di-tag length (optional parameter)
-    Shortest: 150
+    Shortest: 50
 
     #FASTQ files to be analysed, placing paired files on adjacent lines
     s_1_1_sequence.txt
@@ -721,8 +721,8 @@ Example command:
     Index: [Path to Bowtie/Bowtie2 indices on your system]
     R: [Path to R on your system]
     Format: phred33-quals
-    Shortest: 150
-    Longest: 800
+    Shortest: 50
+    Longest: 700
     test_dataset1.fastq
     test_dataset2.fastq
 

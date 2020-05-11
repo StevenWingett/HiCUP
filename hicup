@@ -16,7 +16,7 @@ use Data::Dumper;
 
 ###################################################################################
 ###################################################################################
-##This file is Copyright (C) 2018, Steven Wingett (steven.wingett@babraham.ac.uk)##
+##This file is Copyright (C) 2019, Steven Wingett (steven.wingett@babraham.ac.uk)##
 ##                                                                               ##
 ##                                                                               ##
 ##This file is part of HiCUP.                                                    ##
@@ -331,7 +331,10 @@ if ( $config{zip} ) {
 #Map and pair sequences
 my $ligation = "\@PG\tID:HiCUP Truncater\tVN:" . $hicup_module::VERSION;       #Create the hidden ligation flag to send to HiCUP mapper to print the hicup_truncation settings to the output file
 if ( $config{re1} ) {
-    $ligation = $ligation . "\tDS:\"" . "$config{re1}\"";
+	#We cannot have a ":" in the SAM header at this point, so remove it
+	my $colonless_re1 = $config{re1};
+	$colonless_re1 =~ s/://g;
+    $ligation = $ligation . "\tDS:\"" . "$colonless_re1\"";
 } else {
     $ligation = $ligation . "\tDS\"" . "Ligation junction sequences $config{sequence}\"";
 }
