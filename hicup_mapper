@@ -388,15 +388,14 @@ sub map_file {
         if ( $select->can_read(0.00000001) ) {
             while ( $select->can_read(0.0001) ) {
                 $_ = <ERROR>;
-                warn "$inputfile Bowtie error: $_";
+                warn "$inputfile Aligner error: $_" unless(/Unable to change buffer size from default of 8192/);   #Suppress confusing message from Bowtie2
             }
         }
-
     }
 
     while ( $select->can_read(0.01) ) {
         $_ = <ERROR>;
-        warn "$inputfile Bowtie error: $_";
+        warn "$inputfile Aligner error: $_";
     }
 
     close WRITER or die "Could not close 'WRITER' filehandle : $!";
