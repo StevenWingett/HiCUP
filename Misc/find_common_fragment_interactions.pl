@@ -5,11 +5,33 @@ use warnings;
 
 use Data::Dumper;
 
-#######################################################################################
-#Perl script takes interaction matrix file pairs and report the interactions common/not common
-#to both files
-#######################################################################################
+###################################################################################
+###################################################################################
+##This file is Copyright (C) 2020, Steven Wingett (steven.wingett@babraham.ac.uk)##
+##                                                                               ##
+##                                                                               ##
+##This file is part of HiCUP.                                                    ##
+##                                                                               ##
+##HiCUP is free software: you can redistribute it and/or modify                  ##
+##it under the terms of the GNU General Public License as published by           ##
+##the Free Software Foundation, either version 3 of the License, or              ##
+##(at your option) any later version.                                            ##
+##                                                                               ##
+##HiCUP is distributed in the hope that it will be useful,                       ##
+##but WITHOUT ANY WARRANTY; without even the implied warranty of                 ##
+##MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the                  ##
+##GNU General Public License for more details.                                   ##
+##                                                                               ##
+##You should have received a copy of the GNU General Public License              ##
+##along with HiCUP.  If not, see <http://www.gnu.org/licenses/>.                 ##
+###################################################################################
+###################################################################################
 
+
+#######################################################################################
+#Perl script takes interaction matrix file pairs and report the interactions common/not 
+#common to both files
+#######################################################################################
 
 #Check input ok
 die "Please specify files to process.\n" unless (@ARGV);   #Don't de-duplicate since working with file pairs

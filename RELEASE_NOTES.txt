@@ -1,4 +1,19 @@
-RELEASE NOTES FOR HICUP V0.7.2 (15 January 2018)
+RELEASE NOTES FOR HICUP V0.7.3 (13 May 2020)
+--------------------------------------------
+
+HiCUP v0.7.3 is a minor update incorporating the changes described below:
+
+-Added hicup2juicer to make HiCUP output compatible with Juicer
+
+-Modification to hicup_deduplicator output so files strictly adhere to SAM/BAM format
+
+-Fixed bug preventing --nofill option from working
+
+-No longer reports Bowtie2 message concerning gzbuffer changes
+
+
+
+RELEASE NOTES FOR HICUP V0.7.2 (15 January 2019)
 ------------------------------------------------
 
 HiCUP v0.7.2 is a minor update incorporating the changes described below:

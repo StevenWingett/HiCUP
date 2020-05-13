@@ -2,7 +2,7 @@
 
 ###################################################################################
 ###################################################################################
-##This file is Copyright (C) 2018, Steven Wingett (steven.wingett@babraham.ac.uk)##
+##This file is Copyright (C) 2020, Steven Wingett (steven.wingett@babraham.ac.uk)##
 ##                                                                               ##
 ##                                                                               ##
 ##This file is part of HiCUP.                                                    ##
