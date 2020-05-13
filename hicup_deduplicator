@@ -220,7 +220,7 @@ sub process_file {
             next;
         } else {
             if ($in_header) {
-                my $sam_header_line = "\@PG\tHiCUP Deduplicator\tVN:" . "$hicup_module::VERSION\n";
+                my $sam_header_line = "\@PG\tID:HiCUP Deduplicator\tVN:" . "$hicup_module::VERSION\n";
                 print UNIQUES $sam_header_line;
                 $in_header = 0;
             }
