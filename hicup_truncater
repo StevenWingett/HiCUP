@@ -144,20 +144,31 @@ checkR( \%config );
 my $rA_ligsite;
 if ( $config{seq_trunc} eq '' ) {   #$origseq and $before_cut only required if Hi-C ligation junction determined computationally
     if ($config{nofill}) {
-        unless ( scalar(@{$config{re1}}) == 0 ) {
-            die "'nofill' option is not supported for multiple restriction enzyme digestion...\n"
-        }
         #Fill-in not performed, ligation junction is the original restriction site sequence without the caret
-        my $rA_cutsites = cutsite_deduce( -seq => $config{re1}->[0] );
-        push @{$rA_ligsite}, $rA_cutsites;
+        my  $rA_cutsites;
+        foreach my $re1 ( @{ $config{re1} }) {
+            $rA_cutsites = cutsite_deduce( -seq => $re1);   #Passing a hash -seq -> {$re1} to cutsite_deduce, which returns ref to array
+            push @{$rA_ligsite}, $rA_cutsites;
+        }
     } else {
         $rA_ligsite = fill_end( $rA_junction_sequences );
     }
 }
 
+my %unique_ligation_sites;   #Used for de-duplicating, which may occur following new code to calculate sequences containing Ns
+foreach my $ligation_sites (@{$rA_ligsite}) {
+    foreach my $ligation_site ( @{$ligation_sites}){   #Array of arrays
+        $unique_ligation_sites{$ligation_site} = undef;
+    }
+}
+
+if( $config{nofill} and (scalar (keys %unique_ligation_sites) > 1) ){
+    die "Option '--nofill' is not supported for restriction enzyme digestion at more than one cut-site\nPlease adjust configuration.\n";
+}
+
 my $sequences_string = "[";
-foreach my $ligation_site (@{$rA_ligsite}) {
-    $sequences_string .= join ", ", @{$ligation_site};
+foreach my $ligation_site (keys %unique_ligation_sites){
+    $sequences_string .= join ", ", $ligation_site;
     $sequences_string .= ", ";
 }
 $sequences_string =~ s/, $/]/;
