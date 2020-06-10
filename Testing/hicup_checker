@@ -94,7 +94,7 @@ while(<EXPECTED>){
     foreach my $data_expected (@elements_expected){
         my $data_new = shift @elements_new;
         my $pc_error = 100 * ($data_new - $data_expected) / $data_expected;
-        if($pc_error > $config{threshold}){
+        if(abs($pc_error) > $config{threshold}){
             warn "Data too different: expected: $data_expected\tnew: $data_new\n";
             $problem_flag = 1;
         }
