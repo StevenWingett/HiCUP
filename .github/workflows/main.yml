@@ -1,0 +1,58 @@
+# This is a basic workflow to Test HiCUP
+
+name: HiCUP_Test
+
+# Controls when the action will run. Triggers the workflow on push or pull request
+# events but only for the master branch
+on:
+  push:
+    branches: [ master, devel, actions ]
+  pull_request:
+    branches: [ master, devel, actions ]
+
+# A workflow run is made up of one or more jobs that can run sequentially or in parallel
+jobs:
+  # This workflow contains a single job called "build"
+  build:
+    # The type of runner that the job will run on
+    runs-on: ubuntu-latest
+
+    # Steps represent a sequence of tasks that will be executed as part of the job
+    steps:
+    # Checks-out your repository under $GITHUB_WORKSPACE, so your job can access it
+    - uses: actions/checkout@v2
+
+    # Runs a single command using the runners shell
+    - name: Run a one-line script
+      run: echo Hello, world!
+
+    # Runs a set of commands using the runners shell
+    - name: Update Ubuntu
+      run: |
+        sudo apt-get update 
+
+    - name: Install dependencies
+      run: |
+        sudo apt install samtools
+        sudo apt install bowtie2
+        sudo apt install r-base-core
+                         
+    - name: Download Test Dataset and genome index files and FASTA files
+      run: |
+        wget -nv https://www.bioinformatics.babraham.ac.uk/projects/hicup/test_dataset.tar.gz
+        tar xvzf test_dataset.tar.gz
+        wget -nv http://ftp1.babraham.ac.uk/ftpusr46/Homo_sapiens.GRCh38_Bowtie2_Index_HiCUP.tar
+        tar xvf Homo_sapiens.GRCh38_Bowtie2_Index_HiCUP.tar
+        wget -nv http://ftp1.babraham.ac.uk/ftpusr46/Homo_sapiens.GRCh38_FASTA_HiCUP.tar
+        tar xvf Homo_sapiens.GRCh38_FASTA_HiCUP.tar
+        
+    - name: Run HiCUP
+      run: |
+        $GITHUB_WORKSPACE/hicup --help
+        $GITHUB_WORKSPACE/hicup --version
+        $GITHUB_WORKSPACE/hicup_digester --re1 A^AGCTT,HindIII --genome Human38 --zip *.fa.gz
+        $GITHUB_WORKSPACE/hicup --digest Digest* --zip --threads 2 --index ./Homo_sapiens.GRCh38_Bowtie2_Index_HiCUP/Homo_sapiens.GRCh38 --shortest 50 --longest 700 test_dataset/*.fastq
+        
+    - name: Check results
+      run: |
+         $GITHUB_WORKSPACE/Testing/hicup_checker --threshold 5 --expected test_dataset/HiCUP_summary_test_dataset_results.txt --new HiCUP_summary_report_* 
