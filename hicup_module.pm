@@ -6,9 +6,9 @@ our @EXPORT = qw(VERSION hasval deduplicate_array checkR process_config check_fi
   datestampGenerator print_example_config_file fileNamer arrayAppend versioner calc_perc cutsite_deduce);
 
 our @EXPORT_OK = qw(hashVal outdirFileNamer check_no_duplicate_filename check_filenames_ok 
-    checkAligner checkAlignerIndices newopen quality_checker determineAlignerFormat);
+    checkAligner checkAlignerIndices newopen quality_checker determineAlignerFormat get_csome_position);
 
-our $VERSION = "0.7.3";
+our $VERSION = "0.7.4.dev";
 
 use Data::Dumper;
 use strict;
@@ -613,7 +613,7 @@ sub quality_checker {
 }
 
 ################################
-#Subroutine
+#Subroutine: determineAlignerFormat
 #Receives the FASTQ format and the aligner and determines the aligner-specific format flag
 #Input values are Sanger, Solexa_Illumina_1.0, Illumina_1.3, Illumina_1.5 for the FASTQ fromat
 #and bowtie or bowtie2 for the aligner
@@ -1087,11 +1087,57 @@ sub generateRandomString{
 
 
 
+####################
+#Subroutine get_csome_position
+#Takes a SAM read and returns the chromosome,the sonication 
+#point of the ditag and the strand
+sub get_csome_position{
+        my $read = $_[0];
+        
+        my $csome = (split(/\t/, $read))[2];
+        my $pos = (split(/\t/, $read))[3];
+        my $cigar = (split(/\t/, $read))[5];
+        my $strand = (split(/\t/, $read))[1];
 
+        unless($strand & 0x10){    #Positive strand
+               return ($csome, $pos, '+') 
+        }
+        
+        #Negative strand - process CIGAR string
+        my $three_prime = $pos - 1; # need to adjust this only once
 
+        # for InDel free matches we can simply use the M number in the CIGAR string
+        if ($cigar =~ /^(\d+)M$/){ # linear match
+               $three_prime  += $1;
+        }
 
+        # parsing CIGAR string
+        my @len = split (/\D+/,$cigar); # storing the length per operation
+        my @ops = split (/\d+/,$cigar); # storing the operation
+        shift @ops; # remove the empty first element
+        die "CIGAR string contained a non-matching number of lengths and operations ($cigar)\n" unless (scalar @len == scalar @ops);
 
-
+        # warn "CIGAR string; $cigar\n";
+        ### determining end position of the read
+        foreach my $index(0..$#len){
+               if ($ops[$index] eq 'M'){  # standard matching bases
+                       $three_prime += $len[$index];
+                       # warn "Operation is 'M', adding $len[$index] bp\n";
+               }
+               elsif($ops[$index] eq 'I'){ # insertions do not affect the end position
+                       # warn "Operation is 'I', next\n";
+               }
+               elsif($ops[$index] eq 'D'){ # deletions do affect the end position
+                       # warn "Operation is 'D',adding $len[$index] bp\n";
+                       $three_prime += $len[$index];
+               }
+               else{
+                       die "Found CIGAR operations other than M, I or D: '$ops[$index]'. Not allowed at the moment\n";
+               }
+        }
+        
+        return ($csome, $three_prime, "-");
+}
 
 
 1

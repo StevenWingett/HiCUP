@@ -9,7 +9,7 @@ use Carp;
 use FindBin '$Bin';
 use lib $Bin;
 use hicup_module;
-use hicup_module qw(hashVal outdirFileNamer);
+use hicup_module qw(hashVal outdirFileNamer get_csome_position);
 
 use Data::Dumper;
 
@@ -1066,69 +1066,33 @@ sub sonicate_hic {
         $category_counter{total_valid}++;
 
         #Check if reads are on the same chromosome.
-        my $read1_chromosome_name = ( split( /\t/, $read1 ) )[2];
-        my $read2_chromosome_name = ( split( /\t/, $read2 ) )[2];
-        my $read1_strand;
-        my $read2_strand;
+        my ($read1_chromosome_name, $read1_pos, $read1_strand) = get_csome_position($read1);   #This returns the sonication position
+        my ($read2_chromosome_name, $read2_pos, $read2_strand) = get_csome_position($read2);        
+        my $read1_pos_ten_kb_region = ceil( $read1_pos / 10_000 );
+        my $read2_pos_ten_kb_region = ceil( $read2_pos / 10_000 );
 
-        if ( ( ( split( /\t/, $read1 ) )[1] ) & 0x10 ) {    #Analyse the SAM bitwise flag to determine which strand
-            $read1_strand = '-';
-        } else {
-            $read1_strand = '+';
-        }
-        if ( ( ( split( /\t/, $read2 ) )[1] ) & 0x10 ) {    #Analyse the SAM bitwise flag to determine which strand
-            $read2_strand = '-';
-        } else {
-            $read2_strand = '+';
-        }
+        my ($lookup_start_site1, $lookup_end_site1, $fragment_number1) = identify_fragment($read1_chromosome_name, $read1_pos);
+        my ($lookup_start_site2, $lookup_end_site2, $fragment_number2) = identify_fragment($read2_chromosome_name, $read2_pos);
 
-        my $read1_pos = ( ( split( /\t/, $read1 ) )[3] );
-        my $read2_pos = ( ( split( /\t/, $read2 ) )[3] );
-        my $read1_pos_ten_kb_region = ceil( $read1_pos / 10000 );
-        my $read2_pos_ten_kb_region = ceil( $read2_pos / 10000 );
+        sub identify_fragment {
+            my ($read_chromosome_name, $read_pos) = @_;
+            my $read_pos_ten_kb_region = ceil( $read_pos / 10_000 );
+            my $lookup_start_site;
+            my $lookup_end_site;
+            my $fragment_number;
 
-        #Using the terminal ends of a di-tag to position a read on the digested genome could be problematic because
-        #a restiction enzyme may not cut in the same position on both strands (i.e. creates sticky ends). Filling-in
-        #and truncating reads at the Hi-C junction makes this situation even more complex.
-        #To overcome this problem simply the script uses the position 10 bp upstream of the start of each read when
-        #assigning reads to a fragment in the digested genome.
-        if ( length( ( ( split( /\t/, $read1 ) )[9] ) ) > 10 ) {    #Only perform when sure there is reference genome upstream
-            $read1_pos += 10;                                       #For both '+' and '-' strands, strand not important here
-        }
-        if ( length( ( ( split( /\t/, $read2 ) )[9] ) ) > 10 ) {    #Only perform when sure there is reference genome upstream
-            $read2_pos += 10;                                       #For both '+' and '-' strands, strand not important here
-        }
+            foreach ( keys %{ $digest_fragments{"$read_chromosome_name\t$read_pos_ten_kb_region"} } ) {
+                $lookup_start_site = $_;                               #Assign value here to ensure $lookup_start_site is initialized outside the foreach loop
+                $lookup_end_site = $digest_fragments{"$read_chromosome_name\t$read_pos_ten_kb_region"}{$lookup_start_site};
+                $fragment_number = ( split( /\t/, $lookup_end_site ) )[1];
+                $lookup_end_site = ( split( /\t/, $lookup_end_site ) )[0];                                                      #$lookup_end_site is the value before the tab
 
-        #Determine if read 2 is found in read 1.
-        my $lookup_start_site1;
-        my $lookup_start_site2;
-        my $lookup_end_site1;
-        my $lookup_end_site2;
-        my $fragment_number1;
-        my $fragment_number2;
-
-        foreach ( keys %{ $digest_fragments{"$read1_chromosome_name\t$read1_pos_ten_kb_region"} } ) {
-            $lookup_start_site1 = $_;                               #Assign value here to ensure $lookup_start_site1 is initialized outside the foreach loop
-            $lookup_end_site1 = $digest_fragments{"$read1_chromosome_name\t$read1_pos_ten_kb_region"}{$lookup_start_site1};
-            $fragment_number1 = ( split( /\t/, $lookup_end_site1 ) )[1];
-            $lookup_end_site1 = ( split( /\t/, $lookup_end_site1 ) )[0];                                                      #$lookup_end_site is the value before the tab
-
-            #Check whether read1 is on this fragment
-            if ( ( $lookup_start_site1 <= $read1_pos ) and ( $lookup_end_site1 >= $read1_pos ) ) {
-                last;
+                #Check whether read1 is on this fragment
+                if ( ( $lookup_start_site <= $read_pos ) and ( $lookup_end_site >= $read_pos ) ) {
+                    last;
+                }
             }
-        }
-
-        foreach ( keys %{ $digest_fragments{"$read2_chromosome_name\t$read2_pos_ten_kb_region"} } ) {
-            $lookup_start_site2 = $_;    #Assign value here to ensure $lookup_start_site2 is intitialized outside the foreach loop
-            $lookup_end_site2 = $digest_fragments{"$read2_chromosome_name\t$read2_pos_ten_kb_region"}{$lookup_start_site2};
-            $fragment_number2 = ( split( /\t/, $lookup_end_site2 ) )[1];
-            $lookup_end_site2 = ( split( /\t/, $lookup_end_site2 ) )[0];                                                      #$lookup_end_site is the value before the tab
-
-            #Check whether read2 is on this fragment
-            if ( ( $lookup_start_site2 <= $read2_pos ) and ( $lookup_end_site2 >= $read2_pos ) ) {
-                last;
-            }
+            return($lookup_start_site, $lookup_end_site, $fragment_number);
         }
 
         #Check that all reads are accounted for by the genome digest file
@@ -1151,15 +1115,15 @@ sub sonicate_hic {
         my $correct_size = 1;    #Flag to check insert is within the allowable range
 
         if ( $read1_strand eq '+' ) {
-            $tag1_size = abs( $read1_pos - $lookup_end_site1 ) + 10;    #Add 10bps to correct for modification above
+            $tag1_size = $lookup_end_site1 - $read1_pos + 1
         } else {
-            $tag1_size = abs( $read1_pos + length( ( ( split( /\t/, $read1 ) )[9] ) ) - $lookup_start_site1 ) - 10;    #Remove 10bps to correct for modification above
+            $tag1_size = $read1_pos - $lookup_start_site1 + 1;
         }
 
         if ( $read2_strand eq '+' ) {
-            $tag2_size = abs( $read2_pos - $lookup_end_site2 ) + 10;                                                   #Add 10bps to correct for modification above
+            $tag2_size = $lookup_end_site2 - $read2_pos + 1
         } else {
-            $tag2_size = abs( $read2_pos + length( ( ( split( /\t/, $read2 ) )[9] ) ) - $lookup_start_site2 ) - 10;    #Remove 10bps to correct for modification above
+            $tag2_size = $read2_pos - $lookup_start_site2 + 1;
         }
 
         $ditag_size = $tag1_size + $tag2_size;
@@ -1209,25 +1173,10 @@ sub sonicate_hic {
 
             #Di-tags not classified as 'Same_circularised' will either be 'Same_internal' or 'Same_dangling_ends'
             #Is the 5' end of the read (not the alignment) near (defined as within 6bp) of the of a restriction cut site?
-            my $five_prime_end_of_read1;
-            my $five_prime_end_of_read2;
-
-            if ( $read1_strand eq '+' ) {
-                $five_prime_end_of_read1 = $read1_pos - 10;    #Subtract 10 from position, since 10 was added above to ignore 'problematic' overhang regions
-            } else {
-                $five_prime_end_of_read1 = $read1_pos - 10 + length( ( split( /\t/, $read1 ) )[9] ) - 1;
-            }
-
-            if ( $read2_strand eq '+' ) {
-                $five_prime_end_of_read2 = $read2_pos - 10;
-            } else {
-                $five_prime_end_of_read2 = $read2_pos - 10 + length( ( split( /\t/, $read2 ) )[9] ) - 1;
-            }
-
-            if (   ( abs( $five_prime_end_of_read1 - $lookup_start_site1 ) < 7 )
-                or ( abs( $five_prime_end_of_read1 - $lookup_end_site1 ) < 7 )
-                or ( abs( $five_prime_end_of_read2 - $lookup_start_site1 ) < 7 )
-                or ( abs( $five_prime_end_of_read2 - $lookup_end_site1 ) < 7 ) )
+            if (   ( abs( $read1_pos - $lookup_start_site1 ) < 7 )
+                or ( abs( $read1_pos - $lookup_end_site1 ) < 7 )
+                or ( abs( $read2_pos - $lookup_start_site2 ) < 7 )
+                or ( abs( $read2_pos - $lookup_end_site2 ) < 7 ) )
             {    #Since both reads map to the same fragment, only need lookup start/end sites 1 (i.e. not 2 as well)
                 print SAME_DANGLING_ENDS $read1;
                 print SAME_DANGLING_ENDS $read2;
@@ -1243,23 +1192,13 @@ sub sonicate_hic {
             print RE_LIGATION $read2;
             $category_counter{re_ligation}++;
         } else {
-
             if ( ($insert_size_check) and ( $read1_strand ne $read2_strand ) ) {    #Is this a potential contiguous sequence that spans several restriction sites and passes size selection?
-                my $contig_size;
-                if ( ( $read1_strand eq '+' ) and ( $read2_pos > $read1_pos ) ) {    #Reads opposite orientation and reading into the gap between
-                    $contig_size = $read2_pos - $read1_pos;
-                }
-                if ( ( $read2_strand eq '+' ) and ( $read1_pos > $read2_pos ) ) {    #Reads opposite orientation and reading into the gap between
-                    $contig_size = $read1_pos - $read2_pos;
-                }
-
-                if ($contig_size) {
-                    if ( ( $contig_size > $config{shortest} ) and ( $contig_size < $config{longest} ) ) {
-                        print CONTIGUOUS $read1;
-                        print CONTIGUOUS $read2;
-                        $category_counter{contiguous}++;
-                        next;
-                    }
+                my $contig_size = abs($read2_pos - $read1_pos);
+                if ( ( $contig_size > $config{shortest} ) and ( $contig_size < $config{longest} ) ) {
+                    print CONTIGUOUS $read1;
+                    print CONTIGUOUS $read2;
+                    $category_counter{contiguous}++;
+                    next;
                 }
             }
 
