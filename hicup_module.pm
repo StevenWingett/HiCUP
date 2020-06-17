@@ -1109,6 +1109,7 @@ sub get_csome_position{
         # for InDel free matches we can simply use the M number in the CIGAR string
         if ($cigar =~ /^(\d+)M$/){ # linear match
                $three_prime  += $1;
+               return ($csome, $three_prime, "-");
         }
 
         # parsing CIGAR string
