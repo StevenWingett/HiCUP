@@ -1069,32 +1069,25 @@ sub sonicate_hic {
         my ($read1_chromosome_name, $read1_pos, $read1_strand) = get_csome_position($read1);   #This returns the sonication position
         my ($read2_chromosome_name, $read2_pos, $read2_strand) = get_csome_position($read2);    
 
-        #In theory this should be correct, but in practice we often see dangling-ends etc. In such circumstances,
-        #we do not have a sonication point, but rather a restriction cut-site.  This will have been filled-in, and so
-        #we may have strayed into an adjacent restriction fragment  To correct for this, select a position  a little
-        #into the read and use this position for assigning reads to restriction fragments.
-        if($read1_strand eq "+"){
-            $read1_pos += 7;    #An indent of 7 should solve this problem
-        } else {
-            $read1_pos -= 7; 
-        }
-
-        if($read2_strand eq "+"){
-            $read2_pos += 7;    #An indent of 7 should solve this problem
-        } else {
-            $read2_pos -= 7; 
-        }
-
-        my ($lookup_start_site1, $lookup_end_site1, $fragment_number1) = identify_fragment($read1_chromosome_name, $read1_pos);
-        my ($lookup_start_site2, $lookup_end_site2, $fragment_number2) = identify_fragment($read2_chromosome_name, $read2_pos);
-
+        my ($lookup_start_site1, $lookup_end_site1, $fragment_number1) = identify_fragment($read1_chromosome_name, $read1_pos, $read1_strand);
+        my ($lookup_start_site2, $lookup_end_site2, $fragment_number2) = identify_fragment($read2_chromosome_name, $read2_pos, $read2_strand);
 
         sub identify_fragment {
-            my ($read_chromosome_name, $read_pos) = @_;
+            my ($read_chromosome_name, $read_pos, $read_strand) = @_;
             my $read_pos_ten_kb_region = ceil( $read_pos / 10_000 );
             my $lookup_start_site;
             my $lookup_end_site;
             my $fragment_number;
+
+            #In theory this should be correct, but in practice we often see dangling-ends etc. In such circumstances,
+            #we do not have a sonication point, but rather a restriction cut-site.  This will have been filled-in, and so
+            #we may have strayed into an adjacent restriction fragment  To correct for this, select a position  a little
+            #into the read and use this position for assigning reads to restriction fragments.
+            if($read_strand eq "+"){
+                $read_pos += 7;    #An indent of 7 should solve this problem
+            } else {
+                $read_pos -= 7; 
+            }
 
             foreach ( keys %{ $digest_fragments{"$read_chromosome_name\t$read_pos_ten_kb_region"} } ) {
                 $lookup_start_site = $_;                               #Assign value here to ensure $lookup_start_site is initialized outside the foreach loop
