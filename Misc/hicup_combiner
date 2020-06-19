@@ -1,0 +1,405 @@
+#!/usr/bin/perl
+
+use strict;
+use warnings;
+use Getopt::Long;
+
+use Data::Dumper;
+
+###################################################################################
+###################################################################################
+##This file is Copyright (C) 2020, Steven Wingett (steven.wingett@babraham.ac.uk)##
+##                                                                               ##
+##                                                                               ##
+##This file is part of HiCUP.                                                    ##
+##                                                                               ##
+##HiCUP is free software: you can redistribute it and/or modify                  ##
+##it under the terms of the GNU General Public License as published by           ##
+##the Free Software Foundation, either version 3 of the License, or              ##
+##(at your option) any later version.                                            ##
+##                                                                               ##
+##HiCUP is distributed in the hope that it will be useful,                       ##
+##but WITHOUT ANY WARRANTY; without even the implied warranty of                 ##
+##MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the                  ##
+##GNU General Public License for more details.                                   ##
+##                                                                               ##
+##You should have received a copy of the GNU General Public License              ##
+##along with HiCUP.  If not, see <http://www.gnu.org/licenses/>.                 ##
+###################################################################################
+###################################################################################
+
+###########################################################################################
+#A Perl script to cut Hi-C reads at the occurence of Hi-C ligation juctions but retain all the resulting "sub-reads"
+#We shall classify the HiC “sub-reads” as F1, F2,… and R1, R2 etc…
+#Read pairs not containg the Hi-C ligation sequence will be given the tag ORIGNAL
+#Remember that for sub-reads within the same read, one of the reads should be reverse-complemented when creating a new “reconstructed HiC read”. For example:
+#F1, F2 will become F1-FRC2
+#
+#This naming system will be appended to the FASTQ read ID headers.
+#
+#We can now identify HiC interaction “groups” in our reconstructed datasets. We can also classify the types of interactions we see in the FASTQ file and output BAM files (we can also classify the rejected BAM file reads from the HiCUP pipeline).
+#
+#Reads will also have appended in the header the read number e.g. 7.F2-FRC3 will be an intra-read interaction
+#in the 7th forward read of the FASTQ file, between sub-reads 2 and 3.
+#
+#The script also uses R to generate graphs
+#
+#The script also generates statistics on these sub-read combinations.
+#Helpdesk job: divefeet
+############################################################################################
+
+
+
+###########################################
+#Options
+my $hic_junction = 'GATCGATC';   #HiC junction for DpnII
+my $hic_juction_nucleotides_5prime_allowed = 4;    #Number of nucletides allowed from junction (counting 5' -> 3')
+my $hic_juction_nucleotides_3prime_allowed = 4;    #Number of nucletides allowed from junction (counting 3' -> 5')
+my $minimum_read_length = 20;
+###########################################
+
+#Checks
+if( (scalar @ARGV == 0) or (scalar @ARGV % 2)){
+	die "Please specify FASTQ FILE PAIRS (i.e. an even number of FASTQ files)\n";
+}
+
+die "Specify a hic_junction value.\n" unless(defined $hic_junction);
+die "Specify a hic_juction_nucleotides_allowed value.\n" unless(defined $hic_juction_nucleotides_5prime_allowed);
+die "Specify a hic_juction_nucleotides_allowed value.\n" unless(defined $hic_juction_nucleotides_3prime_allowed);
+
+	
+die "Specify a minimum_read_length.\n" unless(defined $minimum_read_length);
+
+if($hic_juction_nucleotides_5prime_allowed + $hic_juction_nucleotides_3prime_allowed > length($hic_junction)){
+	die("Total allowed nucleotides_allowed cannot be greater than hic_junction length") 
+}
+
+
+my $hic_junction_length = length($hic_junction);
+my $nucleotides_to_skip = length($hic_junction) - $hic_juction_nucleotides_5prime_allowed - $hic_juction_nucleotides_3prime_allowed;
+
+
+#Initialise summary
+my @summary_categories = ('Reads_Pairs_Processed', 'Sub_Reads_Generated', 'Sub_Reads_Too_Short', 
+							'Sub_Reads_Length_Ok', 'No_Pairing', 'Allowed_Subreads', 'Permutations');
+my %summary_counter;
+my $summary_file = 'permutations_summary.txt';
+open(SUMMARY, '>', $summary_file) or die "Could not write to '$summary_file' : $!";
+print SUMMARY "File_Forward\tFile_Reverse";
+foreach my $category (@summary_categories){
+	$summary_counter{$category} = 0;
+	print SUMMARY "\t$category";
+}
+print SUMMARY "\n";	
+
+my $tally_outfile = 'permutations_tally.txt';
+open (TALLY, '>', $tally_outfile) or die "Could not write to '$tally_outfile'\n";
+print TALLY "File_Pair\tTally\tTally_Frequency\n";
+
+
+#Process files as pairs
+print "Processing:\n";
+
+for(my $i = 0; $i < scalar @ARGV; $i += 2) {
+
+
+	#Reset
+	foreach my $category (@summary_categories){
+		$summary_counter{$category} = 0;
+	}
+	
+	
+	my %tally_counter;
+		
+	my $file_forward = $ARGV[$i];
+	my $file_reverse = $ARGV[$i + 1];
+	
+	print "\t'$file_forward' with '$file_reverse'\n";
+	my $fh_forward = cleverOpen($file_forward);
+	my $fh_reverse = cleverOpen($file_reverse);
+	
+	my $outfile_forward = "permuted.$file_forward.fastq.gz";
+	my $outfile_reverse= "permuted.$file_reverse.fastq.gz";
+	
+	open( OUT_F, "| gzip -c - > $outfile_forward" ) or die "Couldn't write to file '$outfile_forward': $!";
+	open( OUT_R, "| gzip -c - > $outfile_reverse" ) or die "Couldn't write to file '$outfile_reverse': $!";
+	
+	while(<$fh_forward>){
+	
+		my $read_forward = $_;   #Get all 4 lines of read
+		$read_forward .= scalar uc <$fh_forward>;
+		$read_forward .= scalar <$fh_forward>;
+		$read_forward .= scalar <$fh_forward>;
+		
+		my $read_reverse = scalar <$fh_reverse>;   #Get all 4 lines of read
+		$read_reverse .= scalar uc <$fh_reverse>;
+		$read_reverse .= scalar <$fh_reverse>;
+		$read_reverse .= scalar <$fh_reverse>;
+		
+		$summary_counter{Reads_Pairs_Processed}++;
+
+		my @forward_subreads = generate_subreads($read_forward);
+		my @reverse_subreads = generate_subreads($read_reverse);
+		
+	
+		if(scalar (@forward_subreads) == 0){    #There may be occasions when all the subreads are less then the minimum allowed length
+			$summary_counter{No_Pairing} += scalar(@reverse_subreads);
+			next;
+		} elsif(scalar (@reverse_subreads) == 0) {
+			$summary_counter{No_Pairing} += scalar(@forward_subreads);
+			next;
+		} else {
+			$summary_counter{Allowed_Subreads} += scalar(@forward_subreads);
+			$summary_counter{Allowed_Subreads} += scalar(@reverse_subreads);
+		}
+			
+		my @permutations = calculate_permutations(\@forward_subreads, \@reverse_subreads);
+		
+		if(scalar(@permutations) % 2){
+			print "Internal code check - non-even number of permutations in:\n";
+			die "This should not happen!!!\n";	
+		}
+		
+		for (my $i = 0; $i < scalar(@permutations); $i += 2){
+			my $readF = $permutations[$i];
+			my $readR = $permutations[$i + 1];   #Paired reads kept in adjacent elements
+			
+			my $headerF = (split(/\s/, $readF))[0];    #Use whitespace separation, else there will be differences between F and R
+			my $headerR = (split(/\s/, $readR))[0];
+			
+			if($headerF ne $headerR){
+				warn "Paired read headers not the same - this should not happen!!!.  See:\n";
+				warn "$headerF\n";
+				warn "$headerR\n";
+				die "Re-check code and/or input data.";
+			}
+			
+			print OUT_F $readF;
+			print OUT_R $readR;	
+		}
+		
+		my $permutation_count = scalar(@permutations) / 2;
+		$tally_counter{$permutation_count}++;
+		$summary_counter{Permutations} += $permutation_count;
+	}
+	
+	close $fh_forward or die "Could not close '$file_forward' filehandle : $!";
+	close $fh_reverse or die "Could not close '$file_reverse' filehandle : $!";
+	close OUT_F or die "Could not close filehandle on '$outfile_forward' : $!";
+	close OUT_R or die "Could not close filehandle on '$outfile_reverse' : $!";
+	
+	
+	#Print to tally	
+	foreach my $count (sort { $tally_counter{$b} <=> $tally_counter{$a} } keys %tally_counter) {
+		print TALLY $file_forward . '_' . $file_reverse . "\t" . $count . "\t" . $tally_counter{$count} . "\n";
+	}
+	
+	
+	#Print out summary
+	print SUMMARY "$file_forward\t$file_reverse";
+	foreach my $category (@summary_categories){
+		print SUMMARY "\t" . $summary_counter{$category};
+	}
+	print SUMMARY "\n";
+
+}
+
+close SUMMARY or die "Could not close '$summary_file' filehandle : $!";
+close TALLY or die "Could not write to '$tally_outfile'\n";
+
+#Process the tally file
+my $r_scipt_filname = "plot_histogram.r";
+open(OUT_RSCRIPT, '>', $r_scipt_filname) or die "Could not write to '$r_scipt_filname' : $!";
+while(<DATA>){
+	print OUT_RSCRIPT;
+}
+close OUT_RSCRIPT or die "Could not close filehandle on '$r_scipt_filname' : $!";
+
+print "Generating summary graphs (using R - which need to be in your path)\n";
+my $command = "Rscript ./$r_scipt_filname";
+!system($command) or die "Could not execute command: '$command'\n";
+
+print "Done\n";
+
+exit(0);	
+
+#####################################################################
+#Subroutines
+#####################################################################
+
+#############	
+#Subroutine	
+#calculate_permutations	
+#Takes i) an array of the forward subreads and 
+# ii) an array of the reverse subreads and calculates
+#the permutations
+#
+#We shall classify the HiC “sub-reads” as F1, F2,… and R1, R2 etc…
+#Remember that for sub-reads within the same read, one of the reads should 
+#be reverse-complemented when creating a new “reconstructed HiC read”. 
+#For example: F1, F2 will become F1-FRC2
+
+#This naming system will be appended to the FASTQ read ID headers.
+#It will also include the count of the read within the file.
+sub calculate_permutations {
+	my ($forward_subreads_array_ref, $reverse_subreads_array_ref) = @_;
+	my @permutations;
+	
+	
+	#If there are no subreads in Forward or Reverse read
+	my @forward_or_reverse = ('F', 'R');   #For use in annotating reads
+	if(  ((scalar @{$forward_subreads_array_ref}) == 1) and ((scalar @{$reverse_subreads_array_ref}) == 1) ){
+		foreach my $subreads_array_ref ($forward_subreads_array_ref, $reverse_subreads_array_ref){
+			my ($header, $seq, $line3, $qual) = split(/\t/, @{$subreads_array_ref}[0]);
+			$header .= ' ' . $summary_counter{Reads_Pairs_Processed} . "." . $forward_or_reverse[0] . "_ORIGINAL";
+			my $read = join("\n", $header, $seq, $line3, $qual) . "\n";
+			push(@permutations, $read);
+			shift(@forward_or_reverse);    #Now use R
+		}
+			return(@permutations);    #No more processing needed
+	}
+	
+
+	#Calculate "within-read" interactions
+	@forward_or_reverse = ('F', 'R');   #For use in annotating reads - reset
+	foreach my $subreads_array_ref ($forward_subreads_array_ref, $reverse_subreads_array_ref){	
+		my $header = (split(/\t/, @{$subreads_array_ref}[0]))[0];  #First element of array, the split by tabs
+		my $line3 = (split(/\t/, @{$subreads_array_ref}[0]))[2];
+	
+		if(scalar (@{$subreads_array_ref}) > 1){		
+			for(my $i = 0; $i < (scalar(@{$subreads_array_ref}) - 1); $i++){
+				for(my $j = $i + 1; $j < (scalar(@{$subreads_array_ref})); $j++){			
+					
+					my (undef, $seqA, undef, $qualA) = split(/\t/, @{$subreads_array_ref}[$i]);
+					my (undef, $seqB, undef, $qualB) = split(/\t/, @{$subreads_array_ref}[$j]);			
+					$seqB = reverse_complement($seqB);
+					$qualB = reverse($qualB);
+					
+					my $indexA = $summary_counter{Reads_Pairs_Processed} . '.' . $forward_or_reverse[0] . ($i + 1);
+					my $indexB = $summary_counter{Reads_Pairs_Processed} . '.' . $forward_or_reverse[0] . 'RC' . ($j + 1);
+					my $readA = $header . ' ' . "$indexA\n$seqA\n$line3\n$qualA\n";
+					my $readB = $header . ' ' . "$indexB\n$seqB\n$line3\n$qualB\n";
+					
+					push(@permutations, $readA, $readB);
+
+				}
+			}
+		}
+		shift(@forward_or_reverse);    #Now use R
+	}
+	
+	
+	#Calculate "between-read" interactions
+	for (my $i = 0;  $i < scalar(@{$forward_subreads_array_ref}); $i++){
+		for (my $j = 0;  $j < scalar(@{$reverse_subreads_array_ref}); $j++){    #Don't create reciprocal interactions (i.e. F-R but not R-F_
+			my($headerF, $seqF, $line3F, $qualF) = split(/\t/, ${$forward_subreads_array_ref}[$i]);
+			my($headerR, $seqR, $line3R, $qualR) = split(/\t/, ${$reverse_subreads_array_ref}[$j]);
+			
+			$headerF .= ' ' . $summary_counter{Reads_Pairs_Processed} . '.F' . ($i + 1);
+			$headerR .= ' ' . $summary_counter{Reads_Pairs_Processed} . '.R' . ($j + 1);
+			
+			my $readF = join("\n", $headerF, $seqF, $line3F, $qualF) . "\n";
+			my $readR = join("\n", $headerR, $seqR, $line3R, $qualR) . "\n";
+			push(@permutations, $readF, $readR);		
+		}
+	}
+
+	return(@permutations);
+}
+
+
+
+#######################
+##Subroutine "cleverOpen":
+##Opens a file with a filhandle suitable for the file extension
+sub cleverOpen{
+  my $file  = shift;
+  my $fh;
+  
+	if( $file =~ /\.bam$/){
+		open( $fh, "samtools view -h $file |" ) or die "Couldn't read '$file' : $!";  
+	}elsif ($file =~ /\.gz$/){
+		open ($fh,"zcat $file |") or die "Couldn't read $file : $!";
+	} else {
+		open ($fh, $file) or die "Could not read $file: $!";
+    }
+  return $fh;
+}
+
+
+
+#############################
+#Subroutine generate_subreads
+sub generate_subreads{
+	my(@read) = split(/\n/, $_[0]);
+	my @frags = split(/$hic_junction/, $read[1]);
+	my @frag_lengths;
+	
+	foreach my $frag (@frags){
+		push(@frag_lengths, length($frag) + $hic_junction_length);
+	}
+	
+	$summary_counter{Sub_Reads_Generated} += scalar(@frags);
+	
+	my @final_reads;
+	my $offset = 0;
+	foreach my $frag_length (@frag_lengths){
+		my $seq = substr($read[1], $offset, $frag_length);   #Do this in to step to omit nucelotides
+		$seq = substr($seq, 0, $frag_length - ($hic_junction_length - $hic_juction_nucleotides_5prime_allowed));
+		my $qual = substr($read[3], $offset, $frag_length);   #Do this in to step to omit nucelotides
+		$qual = substr($qual, 0, $frag_length - ($hic_junction_length - $hic_juction_nucleotides_5prime_allowed));
+		$offset += $frag_length - $hic_juction_nucleotides_3prime_allowed;
+		
+		if(length($seq) >= $minimum_read_length){
+			push(@final_reads, join("\t", $read[0], $seq, $read[2], $qual));
+			$summary_counter{Sub_Reads_Length_Ok}++;
+		} else {
+			$summary_counter{Sub_Reads_Too_Short}++
+		}
+
+	}
+	return (@final_reads);	
+}	
+
+
+
+#Reverse complements a nucleotide sequence
+sub reverse_complement {
+	my $seq = $_[0];
+	
+	$seq = reverse($seq);
+	$seq =~ tr/AGCTagct/TCGAtcga/;
+	return($seq);
+}
+	
+
+
+__DATA__	
+library(tidyverse)
+
+tally <- read_tsv('permutations_tally.txt', col_names=TRUE,
+                  col_types=cols(Tally=col_character()))
+
+tally %>%
+  distinct(File_Pair) -> files_unique
+
+for(i in 1:nrow(files_unique)){
+  file_to_use <- files_unique[[1]][i]
+  
+  tally %>%
+    filter(File_Pair == file_to_use) %>%
+      select(Tally, Tally_Frequency) -> for_barplot
+  
+  outfile = paste0(file_to_use, ".permutations_plot.svg")
+  svg(outfile)
+  plot <- ggplot(data=for_barplot, aes(x=Tally, y=(Tally_Frequency))) +
+    geom_bar(stat="identity") +
+    ggtitle(file_to_use) +
+    theme_minimal()
+  
+  print(plot)
+  dev.off()
+  
+}
+
+print("Generated Plots")
