@@ -482,7 +482,14 @@ sub process_file {
                     my @truncated = split( /$ligsite/, $line2 );
 
                     unless ( ( length $line2 ) == ( length $truncated[0] ) ) {
-                        $line2 = $truncated[0] . $re1;
+                        if(length $truncated[0] == 0) {
+                            $line2 = substr($line2, 0, 1);    #Prevent truncated reads being of zero length
+                        }elsif($re1 =~ /N/){    #If re1 contains an N, don't append this to read, else will add an N to the read
+                            $line2 = $truncated[0]  
+                        } else {
+                            $line2 = $truncated[0] . $re1;
+                        }
+
                         $line4 = substr( $line4, 0, ( length $line2 ) );
                         $truncated_lengths[0] += length $line2;
                         $truncated_lengths[1]++;

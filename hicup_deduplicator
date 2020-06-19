@@ -8,7 +8,7 @@ use Carp;
 use FindBin '$Bin';
 use lib $Bin;
 use hicup_module;
-use hicup_module qw(hashVal newopen fileNamer);
+use hicup_module qw(hashVal newopen fileNamer get_csome_position);
 
 use Data::Dumper;
 
@@ -452,40 +452,8 @@ sub summary_file_creator {
 sub ditag_labeller {
 
     my ( $readF, $readR ) = @_;
-
-    my $readF_strand = ( split( /\t/, $readF ) )[1];
-    my $readF_csome  = ( split( /\t/, $readF ) )[2];
-    my $readF_start  = ( split( /\t/, $readF ) )[3];    #Most upstream base on reference genome
-    my $readF_seq    = ( split( /\t/, $readF ) )[9];
-    my $readF_sonic;
-
-    my $readR_strand = ( split( /\t/, $readR ) )[1];
-    my $readR_csome  = ( split( /\t/, $readR ) )[2];
-    my $readR_start  = ( split( /\t/, $readR ) )[3];    #Most upstream base on reference genome
-    my $readR_seq    = ( split( /\t/, $readR ) )[9];
-    my $readR_sonic;
-
-    #When determining the sonication site remember that SAM format reports the start position
-    #of the sequence as it appears in the reference genome (not the first base encountered
-    #in the sequencing read).
-    #Determine the strand to which the read mapped by analysing the SAM bitwise flag
-    #and thus whether the sonication cut site maps to the start or end of the
-    #genomic reference sequence
-    if ( $readF_strand & 0x10 ) {
-        $readF_strand = '-';
-        $readF_sonic  = $readF_start + length($readF_seq) - 1;
-    } else {
-        $readF_strand = '+';
-        $readF_sonic  = $readF_start;
-    }
-
-    if ( $readR_strand & 0x10 ) {
-        $readR_strand = '-';
-        $readR_sonic  = $readR_start + length($readR_seq) - 1;
-    } else {
-        $readR_strand = '+';
-        $readR_sonic  = $readR_start;
-    }
+    my  ($readF_csome, $readF_sonic, $readF_strand) = get_csome_position($readF);
+    my  ($readR_csome, $readR_sonic, $readR_strand) = get_csome_position($readR);
 
     my $labelF = "$readF_csome\t$readF_sonic\t$readF_strand";
     my $labelR = "$readR_csome\t$readR_sonic\t$readR_strand";
@@ -498,6 +466,8 @@ sub ditag_labeller {
     } else {
         $ditag_label = "$labelF\t$labelR";
     }
+
+    return $ditag_label;
 }
 
 #####################
