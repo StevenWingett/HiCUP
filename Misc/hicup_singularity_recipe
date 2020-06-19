@@ -1,0 +1,46 @@
+Bootstrap: yum
+OSVersion: 7
+MirrorURL: http://mirror.centos.org/centos-7/7/os/x86_64/
+Include: yum
+
+
+%help
+This is a Singularity container for running HiCUP (https://www.bioinformatics.babraham.ac.uk/projects/hicup/)
+It has HiCUP and its dependencies pre-installed, accompanied by the Human HiC test dataset.
+
+
+%post
+
+	#System setup
+	yum -y update
+	yum -y install perl
+	yum -y install wget
+	yum -y install tar
+	yum -y install gzip
+	yum -y install which
+	
+	#Install Miniconda
+	cd /opt/
+	mkdir Miniconda/
+	cd Miniconda/
+	wget https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh
+	bash ./Miniconda3-latest-Linux-x86_64.sh -b -f -p /opt/Miniconda
+	
+	#Link to the conda config file from /etc directory (which will be visible in container - unlike ~/.basrc) 
+	ln -s /opt/Miniconda/etc/profile.d/conda.sh /etc/profile.d/conda.sh
+	source /etc/profile.d/conda.sh
+	conda activate
+	
+	#Install HiCUP and dependencies
+	conda config --add channels defaults
+	conda config --add channels bioconda
+	conda config --add channels conda-forge
+	conda install hicup
+	
+	#Download test dataset
+	mkdir /opt/HiCUP_Test_Dataset/
+	cd /opt/HiCUP_Test_Dataset/
+	wget https://www.bioinformatics.babraham.ac.uk/projects/hicup/test_dataset.tar.gz
+	tar xvzf /opt/HiCUP_Test_Dataset/test_dataset.tar.gz
+	cd
+

@@ -1,19 +1,38 @@
-RELEASE NOTES FOR HICUP V0.7.3 (13 May 2020)
+RELEASE NOTES FOR HICUP v0.7.4 (18 June 2020)
+---------------------------------------------
+
+HiCUP v0.7.4 is a minor update incorporating the changes described below:
+
+-Fixed bug when specifying a cut-site containing an N (any nucleotide).  
+The script hicup_truncater used to incorporate such Ns into the FASTQ 
+truncated read.  This is now fixed and no longer occurs.
+
+-HiCUP now uses CIGAR string information when positioning reads to 
+restriction fragments and during the de-duplication process.
+
+-Added scripts for GitHub Actions unit testing.
+
+-Added a HiCUP Singularity recipe to the Misc folder.
+
+
+
+RELEASE NOTES FOR HICUP v0.7.3 (13 May 2020)
 --------------------------------------------
 
 HiCUP v0.7.3 is a minor update incorporating the changes described below:
 
--Added hicup2juicer to make HiCUP output compatible with Juicer
+-Added hicup2juicer to make HiCUP output compatible with Juicer.
 
--Modification to hicup_deduplicator output so files strictly adhere to SAM/BAM format
+-Modification to hicup_deduplicator output so files strictly adhere to 
+SAM/BAM format.
 
--Fixed bug preventing --nofill option from working
+-Fixed bug preventing --nofill option from working.
 
--No longer reports Bowtie2 message concerning gzbuffer changes
+-No longer reports Bowtie2 message concerning gzbuffer changes.
 
 
 
-RELEASE NOTES FOR HICUP V0.7.2 (15 January 2019)
+RELEASE NOTES FOR HICUP v0.7.2 (15 January 2019)
 ------------------------------------------------
 
 HiCUP v0.7.2 is a minor update incorporating the changes described below:
@@ -22,7 +41,7 @@ HiCUP v0.7.2 is a minor update incorporating the changes described below:
 
 
 
-RELEASE NOTES FOR HICUP V0.7.1 (12 November 2018)
+RELEASE NOTES FOR HICUP v0.7.1 (12 November 2018)
 -------------------------------------------------
 
 HiCUP v0.7.1 is a minor update incorporating the changes described below:
@@ -32,7 +51,7 @@ compatible with the Arima protocol.
 
 
 
-RELEASE NOTES FOR HICUP V0.7.0 (26 October 2018)
+RELEASE NOTES FOR HICUP v0.7.0 (26 October 2018)
 ------------------------------------------------
 
 HiCUP v0.7.0 is a major update incorporating the changes described below:
@@ -46,7 +65,7 @@ for adding this feature.
 
 
 
-RELEASE NOTES FOR HICUP V0.6.1 (10 May 2018)
+RELEASE NOTES FOR HICUP v0.6.1 (10 May 2018)
 ----------------------------------------------
 
 HiCUP v0.6.1 is a minor update incorporating the changes described below:
@@ -61,7 +80,7 @@ files processed.
 reads SAM file, consequently causing the script to crash.
 
 
-RELEASE NOTES FOR HICUP V0.6.0 (23 April 2018)
+RELEASE NOTES FOR HICUP v0.6.0 (23 April 2018)
 ----------------------------------------------
 
 HiCUP v0.6.0 is a major update incorporating the changes described below:
@@ -70,7 +89,7 @@ HiCUP v0.6.0 is a major update incorporating the changes described below:
 multi-mapping read, when using Bowtie2 as the aligner. 
 
 
-RELEASE NOTES FOR HICUP V0.5.10 (26 October 2017)
+RELEASE NOTES FOR HICUP v0.5.10 (26 October 2017)
 -------------------------------------------------
 
 HiCUP v0.5.10 is a minor update incorporating the changes described below:
@@ -79,7 +98,7 @@ HiCUP v0.5.10 is a minor update incorporating the changes described below:
 reads.
 
 
-RELEASE NOTES FOR HICUP V0.5.9 (15 September 2016)
+RELEASE NOTES FOR HICUP v0.5.9 (15 September 2016)
 --------------------------------------------------
 
 HiCUP v0.5.9 is a minor update incorporating the changes described below:
@@ -94,7 +113,7 @@ di-tags in capture Hi-C datasets
 to interpret NoFill:0 in the config file as effectively NoFill:1
 
 
-RELEASE NOTES FOR HICUP V0.5.8 (19 October 2015)
+RELEASE NOTES FOR HICUP v0.5.8 (19 October 2015)
 ------------------------------------------------
 
 HiCUP v0.5.8 is a minor update incorporating the changes described below:
@@ -104,7 +123,7 @@ a configuration file with hicup_digester, hicup_filter or
 hicup_deduplicator.
 
 
-RELEASE NOTES FOR HICUP V0.5.7 (18 June 2015)
+RELEASE NOTES FOR HICUP v0.5.7 (18 June 2015)
 ---------------------------------------------
 
 HiCUP v0.5.7 is a minor update incorporating the changes described below:
@@ -113,7 +132,7 @@ HiCUP v0.5.7 is a minor update incorporating the changes described below:
 is set to a folder other than the current working directory.
 
 
-RELEASE NOTES FOR HICUP V0.5.6 (09 June 2015)
+RELEASE NOTES FOR HICUP v0.5.6 (09 June 2015)
 ---------------------------------------------
 
 HiCUP v0.5.6 is a minor update incorporating the changes described below:
@@ -123,7 +142,7 @@ generation of HTML summary reports and the text file auditing the
 progress of read pairs through the entire pipeline.
 
 
-RELEASE NOTES FOR HICUP V0.5.5 (20 May 2015)
+RELEASE NOTES FOR HICUP v0.5.5 (20 May 2015)
 --------------------------------------------
 
 HiCUP v0.5.5 is a minor update incorporating the changes described below:
@@ -139,7 +158,7 @@ Fixed bug preventing users specifying two --re1 restriction enzymes
 (i.e. the enzymes that create the Hi-C ligation junctions).
 
 
-RELEASE NOTES FOR HICUP V0.5.4 (01 April 2015)
+RELEASE NOTES FOR HICUP v0.5.4 (01 April 2015)
 ----------------------------------------------
 HiCUP v0.5.4 is a minor update incorporating the changes described below:
 
@@ -168,7 +187,7 @@ the 'Documentation' folder.  The HiCUP Manual and QuickStart
 PDF files were deleted.
 
 
-RELEASE NOTES FOR HICUP V0.5.3 (31 December 2014)
+RELEASE NOTES FOR HICUP v0.5.3 (31 December 2014)
 -------------------------------------------------
 HiCUP v0.5.3 is a minor update incorporating the changes described below:
 
@@ -182,7 +201,7 @@ produce a warning message and not run if the input filenames are too
 similar.
 
 
-RELEASE NOTES FOR HICUP V0.5.2 (22 November 2014)
+RELEASE NOTES FOR HICUP v0.5.2 (22 November 2014)
 -------------------------------------------------
 HiCUP v0.5.2 is a minor update incorporating the changes described below:
 
@@ -201,14 +220,14 @@ restriction enzyme recognition site.
 - Pipeline no longer terminates if SAM Tools in not installed.
 
 
-RELEASE NOTES FOR HICUP V0.5.1 (02 November 2014)
+RELEASE NOTES FOR HICUP v0.5.1 (02 November 2014)
 -------------------------------------------------
 HiCUP v0.5.1 is a minor update incorporating the changes described below:
 
 - hicup_deduplicator now accepts --threads as an argument.
 
 
-RELEASE NOTES FOR HICUP V0.5.0 (01 October 2014)
+RELEASE NOTES FOR HICUP v0.5.0 (01 October 2014)
 -------------------------------------------------
 HiCUP v0.5.0 is a major update incorporating the changes described below:
 
@@ -235,7 +254,7 @@ using a configuration file.
 current working directory.
 
 
-RELEASE NOTES FOR HICUP V0.4.2 (27 November 2013)
+RELEASE NOTES FOR HICUP v0.4.2 (27 November 2013)
 -------------------------------------------------
 HiCUP v0.4.2 is a minor update incorporating the changes described below:
 
@@ -259,7 +278,7 @@ did not pass completely through the pipeline.
 left blank in hicup.conf
 
 
-RELEASE NOTES FOR HICUP V0.4.1 (23 September 2013)
+RELEASE NOTES FOR HICUP v0.4.1 (23 September 2013)
 --------------------------------------------------
 HiCUP v0.4.1 is a minor update incorporating the changes described below:
 
@@ -269,7 +288,7 @@ the HTML report.
 - Improved HTML report layout.
 
 
-RELEASE NOTES FOR HICUP V0.4.0 (10 September 2013)
+RELEASE NOTES FOR HICUP v0.4.0 (10 September 2013)
 --------------------------------------------------
 HiCUP v0.4.0 is a major update incorporating the changes described below:
 
@@ -317,7 +336,7 @@ written.
 results of each file processed.
 
 
-RELEASE NOTES FOR HICUP V0.3.0 (02 November 2012)
+RELEASE NOTES FOR HICUP v0.3.0 (02 November 2012)
 -------------------------------------------------
 HiCUP v0.3.0 is a major update incorporating the changes described below:
 
@@ -337,7 +356,7 @@ location of SAMtools.
 correctly by the user.
 
 
-RELEASE NOTES FOR HICUP V0.2.2 (03 August 2012)
+RELEASE NOTES FOR HICUP v0.2.2 (03 August 2012)
 -----------------------------------------------
 HiCUP v0.2.2 is a minor update adding the functionality described below:
 
@@ -352,7 +371,7 @@ the hicup.conf configuration file.
 script dies. 
 
 
-RELEASE NOTES FOR HICUP V0.2.1 (19 July 2012)
+RELEASE NOTES FOR HICUP v0.2.1 (19 July 2012)
 ---------------------------------------------
 HiCUP v0.2.1 is a minor update adding the functionality described below:
 
@@ -369,7 +388,7 @@ classified as derived from circularized molecules.
 falling within each category, not the percentage summary. 
 
 
-RELEASE NOTES FOR HICUP V0.2.0 (26 June 2012)
+RELEASE NOTES FOR HICUP v0.2.0 (26 June 2012)
 ---------------------------------------------
 HiCUP v0.2.0 is a major update providing extra functionality in addition 
 to the removal of several bugs. The most significant changes are 
@@ -407,7 +426,7 @@ sequence.
 chromosome in a file containing multiple chromosomes.
 
 
-RELEASE NOTES FOR HICUP V0.1.1
+RELEASE NOTES FOR HICUP v0.1.1
 ------------------------------
 
 HiCUP v0.1.1 is an alpha release and as such is still a work in progress.
