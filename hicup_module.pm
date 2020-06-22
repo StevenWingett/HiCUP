@@ -949,6 +949,11 @@ sub fileNamer {
         push( @outNames, $rejectsFolder );
     }
 
+    if ($tempOutfiles and ( $script eq 'truncater' ) ) {
+        my $tempFile =  'hicup_truncater_summary_temp_' . $$configRef{datestamp} . '.txt';
+        push(@outNames, $tempFile);
+    } 
+
     if ( $script eq 'all' ) {    #Run the whole pipeline - deduce filenames by performing a recursive function call
 
         my @truncaterSeqOutfiles = fileNamer( $dataIn,                $configRef, 'truncater',    1, 0, 0, 0, 0 );

@@ -4,6 +4,7 @@ use strict;
 use warnings;
 use Getopt::Long;
 use POSIX ":sys_wait_h";    #for nonblocking read
+use File::Basename;
 use FindBin '$Bin';
 use lib $Bin;
 use hicup_module;
@@ -194,16 +195,16 @@ if ( $config{datestamp} eq '' ) {
     $config{datestamp} = datestampGenerator();
 }
 
-my ($summaryfile) = fileNamer( 'SUMMARY', \%config, 'truncater', 0, 1, 0, 0, 0 );    #Will return an array
-$summaryfile = $config{outdir} . $summaryfile;
+my ($summaryfile_temp) = fileNamer( 'SUMMARY', \%config, 'truncater', 0, 0, 0, 1, 0 );    #Will return an array
+$summaryfile_temp = $config{outdir} . $summaryfile_temp;
 
-if ( -e "$summaryfile" ) {
-    die "Summary file \'$summaryfile\' already exists. Please delete or rename file.\n\n";
+if ( -e "$summaryfile_temp" ) {
+    die "Summary file \'$summaryfile_temp\' already exists. Please delete or rename file.\n\n";
 }
 
-open( SUMMARY, ">$summaryfile" ) or die "Could not write to $summaryfile\n";
-print SUMMARY "File\tTotal_Reads_Processed\tTruncated\t%Truncated\tNot_truncated\t%Not_truncated\tAverage_length_truncated_sequence\n";
-close SUMMARY or die "Could not close filehandle on summary file '$summaryfile' : $!";
+open( SUMMARY_TEMP, ">$summaryfile_temp" ) or die "Could not write to $summaryfile_temp\n";
+print SUMMARY_TEMP "File\tTotal_Reads_Processed\tTruncated\t%Truncated\tNot_truncated\t%Not_truncated\tAverage_length_truncated_sequence\n";
+close SUMMARY_TEMP or die "Could not close filehandle on summary file '$summaryfile_temp' : $!";
 
 #Process the sequence file(s)
 print "Truncating sequences\n" unless ( $config{quiet} eq '1' );
@@ -235,6 +236,50 @@ do {
     sleep(1);
     reaper();
 } until ( keys(%children) == 0 );
+
+#Process the temporary summary file and order so that paired files are adjacent
+#to one another in the final summary file.  This is ESSENTIAL, since HiCUP Reporter uses this 
+#to determine file forward/reverse pairings!!!
+my ($summaryfile) = fileNamer( 'SUMMARY', \%config, 'truncater', 0, 1, 0, 0, 0 );    #Will return an array
+$summaryfile = $config{outdir} . $summaryfile;
+
+if ( -e "$summaryfile" ) {
+    die "Summary file '$summaryfile' already exists, please delete or rename file.\n";
+}
+
+open(SUMMARY_TEMP, '<', $summaryfile_temp) or die "Could not open '$summaryfile_temp' : $!";
+open( SUMMARY, '>', $summaryfile ) or die "Could not write to $summaryfile : $!";
+print SUMMARY scalar <SUMMARY_TEMP>;   #Print header row
+my %summaryfile_data;  # %{FASTQ filename} = summary line
+while(<SUMMARY_TEMP>){
+    my $line = $_;
+    my ($fastq_file) = split(/\t/, $line);
+    $summaryfile_data{$fastq_file} = $line;
+}
+close SUMMARY_TEMP or die "Could not close filehandle on '$summaryfile_temp' : $!";
+
+foreach my $fileF ( keys %files ) {    #Now extract the file pair data to file summary file
+    my $fileR = basename($files{$fileF});
+    $fileF = basename($fileF);
+    unless(exists $summaryfile_data{$fileF}){
+        die "Could not find $files{$fileF} in summary hash - this should not happen!\n";  #Internal check
+    }
+
+    unless(exists $summaryfile_data{$fileR}){
+        die "Could not find $files{$fileR} in summary hash - this should not happen!\n";  #Internal check
+    }
+
+    print SUMMARY $summaryfile_data{$fileF};
+    print SUMMARY $summaryfile_data{$fileR};
+}
+close SUMMARY or die "Could not close filehandle on summary file '$summaryfile' : $!";
+unlink $summaryfile_temp or warn "Could not delete temporary file '$summaryfile_temp'\n";
+
+#Produce summary graph
+unless ( $config{r} eq '0' ) {                                   #R not installed/found
+    my $command = $config{r} . 'script ' . "$Bin/r_scripts/hicup_truncater_summary.r $config{outdir} $summaryfile";
+    !system("$command") or warn "Could not produce hicup_truncater summary bar chart: $command: $!";
+}
 
 print "Truncating complete\n" unless ( $config{quiet} eq 1 );
 
@@ -529,23 +574,19 @@ sub process_file {
         $average_trunc_length = 0;
     }
 
-    open( SUMMARY, ">>$summaryfile" ) or die "Could not write to $summaryfile : $!";
+    open( SUMMARY_TEMP, ">>$summaryfile_temp" ) or die "Could not write to $summaryfile_temp : $!";
 
     my $filename_for_summary = ( split( /\//, $inputfile ) )[-1];    #Removes folder extensions
-    print SUMMARY "$filename_for_summary\t$reads_processed\t$truncated\t";
-    printf SUMMARY "%.2f", $percent_trunc;
-    print SUMMARY "\t$not_truncated\t";
-    printf SUMMARY "%.2f", $percent_not_trunc;
-    print SUMMARY "\t";
-    printf SUMMARY "%.2f", $average_trunc_length;
-    print SUMMARY "\n";
-    close SUMMARY or die "Could not close filehandle on '$summaryfile' : $!";
+    print SUMMARY_TEMP "$filename_for_summary\t$reads_processed\t$truncated\t";
+    printf SUMMARY_TEMP "%.2f", $percent_trunc;
+    print SUMMARY_TEMP "\t$not_truncated\t";
+    printf SUMMARY_TEMP "%.2f", $percent_not_trunc;
+    print SUMMARY_TEMP "\t";
+    printf SUMMARY_TEMP "%.2f", $average_trunc_length;
+    print SUMMARY_TEMP "\n";
+    close SUMMARY_TEMP or die "Could not close filehandle on '$summaryfile_temp' : $!";
 
-    #Produce summary graph
-    unless ( $config{r} eq '0' ) {                                   #R not installed/found
-        my $command = $config{r} . 'script ' . "$Bin/r_scripts/hicup_truncater_summary.r $config{outdir} $summaryfile";
-        !system("$command") or warn "Could not produce hicup_truncater summary bar chart: $command: $!";
-    }
+
 }
 
 #####################
