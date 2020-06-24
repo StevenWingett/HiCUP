@@ -1,5 +1,28 @@
 #!/usr/bin/perl
 
+###################################################################################
+###################################################################################
+##This file is Copyright (C) 2020, Steven Wingett (steven.wingett@babraham.ac.uk)##
+##                                                                               ##
+##                                                                               ##
+##This file is part of HiCUP.                                                    ##
+##                                                                               ##
+##HiCUP is free software: you can redistribute it and/or modify                  ##
+##it under the terms of the GNU General Public License as published by           ##
+##the Free Software Foundation, either version 3 of the License, or              ##
+##(at your option) any later version.                                            ##
+##                                                                               ##
+##HiCUP is distributed in the hope that it will be useful,                       ##
+##but WITHOUT ANY WARRANTY; without even the implied warranty of                 ##
+##MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the                  ##
+##GNU General Public License for more details.                                   ##
+##                                                                               ##
+##You should have received a copy of the GNU General Public License              ##
+##along with HiCUP.  If not, see <http://www.gnu.org/licenses/>.                 ##
+###################################################################################
+###################################################################################
+
+
 use strict;
 use warnings;
 use Getopt::Long;
@@ -121,6 +144,8 @@ foreach my $summary_group (keys %summary_data){
     my ($specimen_filename) = split("\t", $specimen_data[0]);
 
     my %config_dummy;
+    $config_dummy{r} = 0;   #Prevents initialisation error in hicup_module.pm
+
     if($specimen_filename =~ /\.bam$/){
         $config_dummy{samtools} = 1;
         $config_dummy{zip} = 1;
@@ -133,13 +158,8 @@ foreach my $summary_group (keys %summary_data){
     }
 
 
-
-
     #Deal with each sample one at a time!
     #Extract truncater summary results for all the files that passed through the pipeline.
-    #print $truncater_summaryfile;
-    #print Dumper \@{ $summary_data{$summary_group}->{$truncater_summaryfile} };
-
 
     my @results_categories = qw(File Total_Reads_1 Total_Reads_2 Not_Truncated_Reads_1 Not_Truncated_Reads_2 Truncated_Read_1 
         Truncated_Read_2 Average_Length_Truncated_1 Average_Length_Truncated_2 Too_Short_To_Map_Read_1 Too_Short_To_Map_Read_2 
@@ -161,7 +181,6 @@ foreach my $summary_group (keys %summary_data){
         $i++;  #Paired results
         my $truncater_results2 = ${$summary_data{$summary_group}->{$truncater_summaryfile}}[$i];
 
-
         my $fastq_file1;
         my $fastq_file2;
 
@@ -176,31 +195,132 @@ foreach my $summary_group (keys %summary_data){
     	}
 
     	#Mapping results
-    	
+        my $trunc_file1 = fileNamer($fastq_file1, \%config_dummy, 'truncater');
+        my $trunc_file2 = fileNamer($fastq_file2, \%config_dummy, 'truncater');
+        my @mapping_results = @{$summary_data{$summary_group}->{$mapper_summaryfile} };
+        #print Dumper \@mapping_results;
 
+        unless(scalar(@mapping_results) == 2){   #Internal check
+            die "There are not 2 elements in mapping results array - this should not happen!";   
+        }
 
+        my $trunc_file1_results;
+        my $trunc_file2_results;
+        foreach my $line (@mapping_results){
+            my ($line_filename) = split(/\t/, $line);
+            if($line_filename eq $trunc_file1){
+                $trunc_file1_results = $line;
+            } elsif($line_filename eq $trunc_file2) {
+                $trunc_file2_results = $line;
+            } else {   #Internal check
+                die "Could not find truncation filename in array - this should not happen!";
+            }
+        }
 
+        die "Could not find trunc_file1_results - this should not happen!" unless defined($trunc_file1_results); #Internal checks
+        die "Could not find trunc_file2_results - this should not happen!" unless defined($trunc_file2_results);
 
+       # Too_Short_To_Map_Read_1 Too_Short_To_Map_Read_2 
+       # Unique_Alignments_Read_1 Unique_Alignments_Read_2 Multiple_Alignments_Read_1 Multiple_Alignments_Read_2 
+       # Failed_To_Align_Read_1 Failed_To_Align_Read_2 Paired_Read_1 Paired_Read_2
 
+        my $processed_reads1;
+        (undef, $processed_reads1, $summary_results{Too_Short_To_Map_Read_1}, undef, 
+        $summary_results{Unique_Alignments_Read_1}, undef, 
+        $summary_results{Multiple_Alignments_Read_1}, undef, 
+        $summary_results{Failed_To_Align_Read_1}, undef, 
+        $summary_results{Paired_Read_1}) = split(/\t/, $trunc_file1_results);
 
+        my $processed_reads2;
+        (undef, $processed_reads2, $summary_results{Too_Short_To_Map_Read_2}, undef, 
+        $summary_results{Unique_Alignments_Read_2}, undef, 
+        $summary_results{Multiple_Alignments_Read_2}, undef, 
+        $summary_results{Failed_To_Align_Read_2}, undef, 
+        $summary_results{Paired_Read_2}) = split(/\t/, $trunc_file2_results);
 
+        #Internal checks
+        unless($processed_reads1 == $processed_reads2){
+            warn "Reads processed by mapper in file1 ($processed_reads1) does not match file2 ($processed_reads2)";
+            die "This should not happen!"
+        }
 
+        unless($processed_reads1 ==     $summary_results{Too_Short_To_Map_Read_1} + 
+                                        $summary_results{Unique_Alignments_Read_1} +
+                                        $summary_results{Multiple_Alignments_Read_1} +
+                                        $summary_results{Failed_To_Align_Read_1} ) 
+        {
+            warn "The number of processed reads1 does not match the sub-totals\n";
+            die "This should not happen!";
+        }
+        
+        unless($processed_reads2 ==     $summary_results{Too_Short_To_Map_Read_2} + 
+                                        $summary_results{Unique_Alignments_Read_2} +
+                                        $summary_results{Multiple_Alignments_Read_2} +
+                                        $summary_results{Failed_To_Align_Read_2} ) 
+        {
+            warn "The number of processed reads2 does not match the sub-totals\n";
+            die "This should not happen!";
+        }  
 
-
-
-
-
+        unless($summary_results{Paired_Read_1} == $summary_results{Paired_Read_2}) {
+            warn "Paired reads 1 ($summary_results{Paired_Read_1}) does not match ";
+            warn "paired reads 2 ($summary_results{Paired_Read_2})";
+            die "This should not happen!";
+        }  
 
 
     #File Total_Reads_1 Total_Reads_2 Not_Truncated_Reads_1 Not_Truncated_Reads_2 Truncated_Read_1 Truncated_Read_2 Average_Length_Truncated_1 Average_Length_Truncated_2 Too_Short_To_Map_Read_1 Too_Short_To_Map_Read_2 Unique_Alignments_Read_1 Unique_Alignments_Read_2 Multiple_Alignments_Read_1 Multiple_Alignments_Read_2 Failed_To_Align_Read_1 Failed_To_Align_Read_2 Paired_Read_1 Paired_Read_2 Valid_Pairs Invalid_Pairs Same_Circularised Same_Dangling_Ends Same_Fragment_Internal Re_Ligation Contiguous_Sequence Wrong_Size Deduplication_Read_Pairs_Uniques Deduplication_Cis_Close_Uniques Deduplication_Cis_Far_Uniques Deduplication_Trans_Uniques Percentage_Mapped Percentage_Valid Percentage_Uniques Percentage_Unique_Trans Percentage_Ditags_Passed_Through_HiCUP
     #File Total_Reads_1 Total_Reads_2 Not_Truncated_Reads_1 Not_Truncated_Reads_2 Truncated_Read_1 Truncated_Read_2 Average_Length_Truncated_1 Average_Length_Truncated_2 Too_Short_To_Map_Read_1 Too_Short_To_Map_Read_2 Unique_Alignments_Read_1 Unique_Alignments_Read_2 Multiple_Alignments_Read_1 Multiple_Alignments_Read_2 Failed_To_Align_Read_1 Failed_To_Align_Read_2 Paired_Read_1 Paired_Read_2 Valid_Pairs Invalid_Pairs Wrong_Size No_Ligation No_Ligation_Internal_Re2 Unclassified Unmapped Self_Ligation Deduplication_Read_Pairs_Uniques Deduplication_Cis_Close_Uniques Deduplication_Cis_Far_Uniques Deduplication_Trans_Uniques Percentage_Mapped Percentage_Valid Percentage_Uniques Percentage_Unique_Trans Percentage_Ditags_Passed_Through_HiCUP
 
 
-    # Check the forward and reverse reads for a file pair correspond exactly.
+        #Extract filter summary results 
+        my @filter_results = @{$summary_data{$summary_group}->{$filter_summaryfile} };  #Contains results of other files
+        #print Dumper \@filter_results;
+        my @trunc_file_pair = ($trunc_file1, $trunc_file2);
+        my ($mapping_file) = fileNamer( \@trunc_file_pair, \%config_dummy, 'mapper');
+        my $filter_file_results;   #Results of interest
+        
+        foreach my $line (@filter_results){
+            my ($filename) = split(/\t/, $line);
+            if($filename eq $mapping_file) {
+                if(defined $filter_file_results){    #Internal check
+                    warn "The same filename ($filename) is present muliple times in '$filter_summaryfile'\n";
+                    die "This should not happen!";
+                } else {
+                    $filter_file_results = $line;
+                }
+            }
+        }
 
+        my $filter_pairs_processed;
+        (undef, $filter_pairs_processed, $summary_results{Valid_Pairs}, undef, undef, undef, 
+        $summary_results{Invalid_Pairs}, $summary_results{Same_Circularised}, 
+        $summary_results{Same_Dangling_Ends}, $summary_results{Same_Fragment_Internal}, 
+        $summary_results{Re_Ligation}, $summary_results{Contiguous_Sequence}, 
+        $summary_results{Wrong_Size}) = split(/\t/, $filter_file_results);
 
-    #Extract filter summary results (this could be a sonication or double-digest protocol)
+        #Internal checks
+        unless($filter_pairs_processed == $summary_results{Paired_Read_1}){
+            warn "Paired reads from mapper script ($filter_pairs_processed) do not match input passed to filter script ($summary_results{Paired_Read_1})\n";
+            die "This should not happen!";
+        }
 
+        unless($filter_pairs_processed == $summary_results{Valid_Pairs} + $summary_results{Invalid_Pairs}){
+            warn "Paired Reads Processed ($filter_pairs_processed) is not equal to the total Valid Read Pairs ($summary_results{Valid_Pairs}) + Invalid Read Pairs ($summary_results{Invalid_Pairs})\n";
+            die "This should not happen!";
+        }
+
+        unless( $summary_results{Invalid_Pairs} == $summary_results{Same_Circularised} +  $summary_results{Same_Dangling_Ends} +
+        $summary_results{Same_Fragment_Internal} + $summary_results{Re_Ligation} +  $summary_results{Contiguous_Sequence} +
+        $summary_results{Wrong_Size} ) {
+            warn "Total Invalid Pairs ($summary_results{Invalid_Pairs}) does not correspond to sum of artefacts (Same Circularised etc.)\n";
+            die "This should not happen!";
+        }
+
+        #Deduplicator summary results
+        
+
+        print Dumper \%summary_results;
     }
 
 
