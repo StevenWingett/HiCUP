@@ -22,7 +22,6 @@
 ###################################################################################
 ###################################################################################
 
-
 use strict;
 use warnings;
 use Getopt::Long;
@@ -42,7 +41,7 @@ use Data::Dumper;
 #Get user-supplied parameters
 #Option variables
 my %config = (
-    datestamp => '',
+    #datestamp => '',
     help      => '',
     outdir    => '',
     quiet     => '',
@@ -50,18 +49,22 @@ my %config = (
 );
 
 my $config_result = GetOptions(    #Stores parameters
-    "datestamp"  => \$config{datestamp},
     "help"       => \$config{help},
     "outdir=s"   => \$config{outdir},
     "quiet"      => \$config{quiet},
+    "version"    => \$config{version}
 );
 
-die "Command line options need to be in the correct format (hicup -help for more details).\n" unless ($config_result);
+die "Command line options need to be in the correct format (hicup_reporter --help for more details).\n" unless ($config_result);
 
+if ( $config{help} ) {
+    print while (<DATA>);
+    exit(0);
+}
 
 #Print version and exit
 if ( $config{version} ) {
-    print "HiCUP v$hicup_module::VERSION\n";
+    print "HiCUP Reporter v$hicup_module::VERSION\n";
     exit(0);
 }
 
@@ -69,8 +72,10 @@ unless(scalar (@ARGV) == 1){
     die "Please enter ONE folder to process.\n";
 }
 
+#TODO Check output file doesn't already exist
 
-print "Creating combined HiCUP summary report\n";
+
+print "Creating combined HiCUP summary report\n" unless $config{quiet};
 
 my $indir = abs_path($ARGV[0]);
 chomp $indir;
@@ -81,7 +86,7 @@ unless(-d $indir){
     die "Please adjust configuration.\n"
 }
 
-print "Reading folder '" . $indir . "'\n";
+print "Reading folder '" . $indir . "'\n" unless $config{quiet};
 
 #Look in target folder for all the hicup_deduplicater files (the last step in the pipeline)
 #Identify all the reports, grouping by the unique ids in the the summary report filenames
@@ -109,7 +114,7 @@ foreach my $group (@glob_results){
 }
 
 if(scalar (keys %groups_summaryfiles)){
-    print "\t" . scalar (keys %groups_summaryfiles) . " complete summary results groups identified in folder\n"
+    print "\t" . scalar (keys %groups_summaryfiles) . " complete summary results groups identified in folder\n" unless $config{quiet};
 } else {
     die "Could not identify any complete summary results groups in folder.\n";
 }
@@ -130,12 +135,10 @@ foreach my $summary_group (keys %groups_summaryfiles){
     }
 }
 
-#print Dumper \%summary_data;
 
 #Process each group in turn 
 foreach my $summary_group (keys %summary_data){
 
-    
     #Use the deduplicater summary file to determine the files that made it all the way throught the pipeline
     #Determine whether --zip was selected and whether samtools was used and set the dummy config datastructure accordingly
     #Don't collect the values now, but do this as we pass sequentially through all the summary files
@@ -157,10 +160,8 @@ foreach my $summary_group (keys %summary_data){
         die "Filename extension of file '$specimen_filename' in '$deduplicater_summaryfile' not recognised.\n";
     }
 
-
     #Deal with each sample one at a time!
     #Extract truncater summary results for all the files that passed through the pipeline.
-
     my @results_categories = qw(File Total_Reads_1 Total_Reads_2 Not_Truncated_Reads_1 Not_Truncated_Reads_2 Truncated_Read_1 
         Truncated_Read_2 Average_Length_Truncated_1 Average_Length_Truncated_2 Too_Short_To_Map_Read_1 Too_Short_To_Map_Read_2 
         Unique_Alignments_Read_1 Unique_Alignments_Read_2 Multiple_Alignments_Read_1 Multiple_Alignments_Read_2 
@@ -173,6 +174,12 @@ foreach my $summary_group (keys %summary_data){
     foreach my $category (@results_categories){
         $summary_results{$category} = undef;
     }
+
+    #Write out the text summary results file.  Write a combined file and .... 
+    #TODO a file for each processed datastructure
+    my $outfile = "HiCUP_summary_report_" . "$summary_group.txt";
+    open(OUT, '>', $outfile) or die "Could not write to '$outfile' : $!";
+    print OUT join("\t", @results_categories) . "\n";   #Print header
 
     for (my $i = 0; $i < scalar ( @{$summary_data{$summary_group}->{$truncater_summaryfile}} ); $i++) {
 
@@ -198,7 +205,6 @@ foreach my $summary_group (keys %summary_data){
         my $trunc_file1 = fileNamer($fastq_file1, \%config_dummy, 'truncater');
         my $trunc_file2 = fileNamer($fastq_file2, \%config_dummy, 'truncater');
         my @mapping_results = @{$summary_data{$summary_group}->{$mapper_summaryfile} };
-        #print Dumper \@mapping_results;
 
         unless(scalar(@mapping_results) == 2){   #Internal check
             die "There are not 2 elements in mapping results array - this should not happen!";   
@@ -220,10 +226,6 @@ foreach my $summary_group (keys %summary_data){
         die "Could not find trunc_file1_results - this should not happen!" unless defined($trunc_file1_results); #Internal checks
         die "Could not find trunc_file2_results - this should not happen!" unless defined($trunc_file2_results);
 
-       # Too_Short_To_Map_Read_1 Too_Short_To_Map_Read_2 
-       # Unique_Alignments_Read_1 Unique_Alignments_Read_2 Multiple_Alignments_Read_1 Multiple_Alignments_Read_2 
-       # Failed_To_Align_Read_1 Failed_To_Align_Read_2 Paired_Read_1 Paired_Read_2
-
         my $processed_reads1;
         (undef, $processed_reads1, $summary_results{Too_Short_To_Map_Read_1}, undef, 
         $summary_results{Unique_Alignments_Read_1}, undef, 
@@ -237,7 +239,8 @@ foreach my $summary_group (keys %summary_data){
         $summary_results{Multiple_Alignments_Read_2}, undef, 
         $summary_results{Failed_To_Align_Read_2}, undef, 
         $summary_results{Paired_Read_2}) = split(/\t/, $trunc_file2_results);
-
+        $summary_results{Percentage_Mapped} = calc_perc($summary_results{Paired_Read_1}, $processed_reads1, 2);
+        
         #Internal checks
         unless($processed_reads1 == $processed_reads2){
             warn "Reads processed by mapper in file1 ($processed_reads1) does not match file2 ($processed_reads2)";
@@ -268,14 +271,8 @@ foreach my $summary_group (keys %summary_data){
             die "This should not happen!";
         }  
 
-
-    #File Total_Reads_1 Total_Reads_2 Not_Truncated_Reads_1 Not_Truncated_Reads_2 Truncated_Read_1 Truncated_Read_2 Average_Length_Truncated_1 Average_Length_Truncated_2 Too_Short_To_Map_Read_1 Too_Short_To_Map_Read_2 Unique_Alignments_Read_1 Unique_Alignments_Read_2 Multiple_Alignments_Read_1 Multiple_Alignments_Read_2 Failed_To_Align_Read_1 Failed_To_Align_Read_2 Paired_Read_1 Paired_Read_2 Valid_Pairs Invalid_Pairs Same_Circularised Same_Dangling_Ends Same_Fragment_Internal Re_Ligation Contiguous_Sequence Wrong_Size Deduplication_Read_Pairs_Uniques Deduplication_Cis_Close_Uniques Deduplication_Cis_Far_Uniques Deduplication_Trans_Uniques Percentage_Mapped Percentage_Valid Percentage_Uniques Percentage_Unique_Trans Percentage_Ditags_Passed_Through_HiCUP
-    #File Total_Reads_1 Total_Reads_2 Not_Truncated_Reads_1 Not_Truncated_Reads_2 Truncated_Read_1 Truncated_Read_2 Average_Length_Truncated_1 Average_Length_Truncated_2 Too_Short_To_Map_Read_1 Too_Short_To_Map_Read_2 Unique_Alignments_Read_1 Unique_Alignments_Read_2 Multiple_Alignments_Read_1 Multiple_Alignments_Read_2 Failed_To_Align_Read_1 Failed_To_Align_Read_2 Paired_Read_1 Paired_Read_2 Valid_Pairs Invalid_Pairs Wrong_Size No_Ligation No_Ligation_Internal_Re2 Unclassified Unmapped Self_Ligation Deduplication_Read_Pairs_Uniques Deduplication_Cis_Close_Uniques Deduplication_Cis_Far_Uniques Deduplication_Trans_Uniques Percentage_Mapped Percentage_Valid Percentage_Uniques Percentage_Unique_Trans Percentage_Ditags_Passed_Through_HiCUP
-
-
         #Extract filter summary results 
         my @filter_results = @{$summary_data{$summary_group}->{$filter_summaryfile} };  #Contains results of other files
-        #print Dumper \@filter_results;
         my @trunc_file_pair = ($trunc_file1, $trunc_file2);
         my ($mapping_file) = fileNamer( \@trunc_file_pair, \%config_dummy, 'mapper');
         my $filter_file_results;   #Results of interest
@@ -299,6 +296,10 @@ foreach my $summary_group (keys %summary_data){
         $summary_results{Re_Ligation}, $summary_results{Contiguous_Sequence}, 
         $summary_results{Wrong_Size}) = split(/\t/, $filter_file_results);
 
+        $summary_results{Percentage_Valid} = calc_perc(
+                                                        $summary_results{Valid_Pairs},
+                                                        $filter_pairs_processed, 2
+                                                    );
         #Internal checks
         unless($filter_pairs_processed == $summary_results{Paired_Read_1}){
             warn "Paired reads from mapper script ($filter_pairs_processed) do not match input passed to filter script ($summary_results{Paired_Read_1})\n";
@@ -317,22 +318,60 @@ foreach my $summary_group (keys %summary_data){
             die "This should not happen!";
         }
 
-        #Deduplicator summary results
+        #Extract deduplicator summary results 
+        my @deduplicater_results = @{$summary_data{$summary_group}->{$deduplicater_summaryfile} };  #Contains results of other files
+        my ($filter_file) = fileNamer( $mapping_file, \%config_dummy, 'filter');
+        my $deduplicater_file_results;   #Results of interest
+        
+        foreach my $line (@deduplicater_results){
+            my ($filename) = split(/\t/, $line);
+            if($filename eq $filter_file) {
+                if(defined $deduplicater_file_results){    #Internal check
+                    warn "The same filename ($filename) is present muliple times in '$deduplicater_summaryfile'\n";
+                    die "This should not happen!";
+                } else {
+                    $deduplicater_file_results = $line;
+                    $summary_results{File} = fileNamer($filename, \%config_dummy, 'deduplicator');
+                    $summary_results{File} = fileNamer($summary_results{File}, \%config_dummy, 'hicup');   #Deducing final file is 2-step process
+                }
+            }
+        }
+        
+        my $dedplicator_pairs_processed;
+        (undef, $dedplicator_pairs_processed, 
+            $summary_results{Deduplication_Read_Pairs_Uniques}, 
+            $summary_results{Deduplication_Cis_Close_Uniques}, 
+            $summary_results{Deduplication_Cis_Far_Uniques}, 
+            $summary_results{Deduplication_Trans_Uniques}) 
+                = split(/\t/, $deduplicater_file_results);
         
 
-        print Dumper \%summary_results;
+        $summary_results{Percentage_Uniques} 
+            = calc_perc($summary_results{Deduplication_Read_Pairs_Uniques}, 
+                        $dedplicator_pairs_processed, 2);
+
+        $summary_results{Percentage_Unique_Trans} = 
+            calc_perc( $summary_results{Deduplication_Trans_Uniques}, $summary_results{Deduplication_Read_Pairs_Uniques}, 2);
+
+        $summary_results{Percentage_Ditags_Passed_Through_HiCUP} = calc_perc($summary_results{Deduplication_Read_Pairs_Uniques}, $summary_results{Total_Reads_1}, 2);
+	  
+
+        #Print results to file
+        #print Dumper \%summary_results;
+        my $results_string = '';
+        foreach my $category (@results_categories) {
+            $results_string .= $summary_results{$category} . "\t";
+        }
+        $results_string =~ s/\t$/\n/;   #Replace trailing tab with newline
+        print OUT $results_string;
     }
 
-
+    close OUT or die "Could not close filehandle on '$outfile' : $!";
 }
 
 
-
-#Write out the text summary results file.  Write a combined file and a file for each processed datastructure
-
-#Use plot.ly to produce a summary HTML report
-
-print "Created combined summary reports\n";
+#TODO Use plot.ly/R to produce a summary report
+print "Created combined summary reports\n" unless $config{quiet};
 
 exit (0);
 
@@ -340,8 +379,6 @@ exit (0);
 ###################################################################################
 #Subroutines
 ###################################################################################
-
-
 
 
 #######################
@@ -364,19 +401,44 @@ sub cleverOpen{
 
 
 
+__DATA__
 
 
+TODO EDIT!!!!!!!
 
+HiCUP homepage: www.bioinformatics.babraham.ac.uk/projects/hicup
 
+SYNOPSIS
 
+hicup is used to run the whole HiCUP pipeline
 
+hicup [OPTIONS]... --config [CONFIGURATION FILE]...
+hicup [OPTIONS]... [FILES]
 
+FUNCTION
 
+The HiCUP pipeline receives FASTQ files and generates Hi-C paired read (di-tag)
+files. The hicup script regulates the pipeline, passing output from one script to 
+the next. 
 
+The HiCUP pipeline uses a configuration file to set the mapping and filtering 
+parameters. To produce an example configuration file:
 
+hicup --example
 
+Parameters may also be passed to HiCUP via the command line, overriding those 
+specified in the configuration file. FASTQ file pairs should be place next to 
+each other when using the command line, or on adjacent lines in the configuration 
+file.
 
+COMMAND LINE OPTIONS
 
+--help         Print help message and exit
+--outdir       Directory to write output files
+--quiet        Suppress progress reports (except warnings)
+--version      Print the program version and exit
 
+Full instructions on running the pipeline can be found at:
+www.bioinformatics.babraham.ac.uk/projects/hicup
 
-
+Steven Wingett, Babraham Institute, Cambridge, UK (steven.wingett@babraham.ac.uk)
