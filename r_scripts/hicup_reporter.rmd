@@ -1,0 +1,133 @@
+---
+title: "HiCUP Summary Report"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+---
+
+```{r, setup, include=FALSE}
+knitr::opts_chunk$set(message = FALSE, warning = FALSE)
+
+library (tidyverse)
+library(plotly)
+
+rm(list = ls())
+```
+# Truncation & Mapping
+```{r, import_data, echo=FALSE}
+
+file <- "HiCUP_summary_report_UnjOgSSlxX_12-39-04_22-06-2020.txt"
+hicup_data <- read_tsv(file)
+```
+
+```{r, truncation_mapping, echo=FALSE}
+#Make Truncation/Mapping Barplot
+hicup_data %>%
+  select(2:19) %>%
+      rename(Average_Length_Truncated_Read_1 = Average_Length_Truncated_1) %>% 
+        rename(Average_Length_Truncated_Read_2 = Average_Length_Truncated_2) %>% 
+          gather(key="Category", value="Count") %>%
+            separate(col=Category, into=c("Category", "Read"), sep="_Reads_|_Read_") %>%
+              mutate(Category = str_replace_all(string=Category, pattern = '_', replacement = ' ')) -> trunc_map_data
+
+trunc_map_data %>%    #Remove average read length data 
+  slice(-7, -8) -> trunc_map_data_graph
+
+
+trunc_map_data_graph %>% ggplot(aes(x=factor(Category, level = unique(trunc_map_data_graph$Category)), y=Count, fill=Read)) +
+                          geom_bar(stat="identity", position=position_dodge()) + 
+                          scale_y_continuous(labels = function(x) format(x, big.mark = ",", scientific = FALSE)) + 
+                          ylab("Read Count") +
+                          theme_minimal() + 
+                          theme(axis.text.x=element_text(angle = 45, vjust = 0.5), axis.title.x=element_blank()) +
+                          scale_fill_manual(values=c("#222F61", "#34ACF2")) -> trunc_map_plot
+
+ggplotly(trunc_map_plot, tooltip="Count")
+
+trunc_map_data %>%
+  slice(1:8) %>%
+    spread(key=Read, value=Count) %>%
+      rename("Read 1" = "1") %>%
+        rename("Read 2" = "2")  -> trunc_data_table
+
+trunc_map_data %>%
+  select(Category) %>%
+    distinct() -> categories_ordered
+
+left_join(categories_ordered, trunc_data_table) %>%    #Adjust to original order
+  filter(!is.na(`Read 1`)) -> trunc_data_table
+
+trunc_data_table %>%
+  slice(4:4) -> average_truncation    #average_truncation as a separate table
+
+trunc_data_table %>%
+  slice(1:3) ->
+    trunc_data_table
+
+knitr::kable(trunc_data_table, digits = 0, format.args = list(big.mark = ","))
+knitr::kable(average_truncation, digits = 1, format.args = list(big.mark = ","))
+
+trunc_map_data %>%
+  slice(9:18) %>%
+    spread(key=Read, value=Count) %>%
+      rename("Read 1" = "1") %>%
+        rename("Read 2" = "2")  -> map_data_table
+
+left_join(categories_ordered, map_data_table) %>%    #Adjust to original order
+  filter(!is.na(`Read 1`)) -> map_data_table
+
+knitr::kable(map_data_table, digits = 0, format.args = list(big.mark = ","))
+```
+
+
+# Filtering
+```{r, filtering, echo=FALSE}
+#Make Truncation/Mapping Barplot
+hicup_data %>%
+  select(20:27) %>%
+    gather(key="Category", value="Count") %>%
+      mutate(Category = str_replace_all(string=Category, pattern = '_', replacement = ' ')) -> filter_data
+
+filter_data %>%
+  filter(Category != "Invalid Pairs") -> filter_data_pie
+
+#colors <- c('rgb(211,94,96)', 'rgb(128,133,133)', 'rgb(144,103,167)', 'rgb(171,104,87)', 'rgb(114,147,203)')
+#colors <- c('rgb(211,94,96)')
+colors <- c("#222F61", "#34ACF2", "#222F61", "#34ACF2", "#222F61", "#34ACF2", "#222F61")
+
+filter.pie <- plot_ly(filter_data_pie, labels = ~Category, values = ~Count, type = 'pie',
+               textposition = 'inside',
+               textinfo = 'label+percent',
+               insidetextfont = list(color = '#FFFFFF'),
+               hoverinfo = 'text',
+               text = ~paste(Count),
+               marker = list(colors = colors,
+                             line = list(color = '#FFFFFF', width = 1)),
+               #The 'pull' attribute can also be used to create space between the sectors
+               showlegend = FALSE)
+filter.pie <- filter.pie %>% layout( xaxis = list(showgrid = FALSE, zeroline = FALSE, showticklabels = FALSE),
+                      yaxis = list(showgrid = FALSE, zeroline = FALSE, showticklabels = FALSE))
+
+ggplotly(filter.pie)
+
+
+filter_data %>%  
+  add_row(Category = "Total Pairs", Count = (hicup_data$Valid_Pairs + hicup_data$Invalid_Pairs)) -> filter_data_table
+  
+knitr::kable(filter_data_table, digits = 0, format.args = list(big.mark = ","))
+
+```
+
+
+# Deduplication
+
+```{r, deduplication, echo=FALSE}
+#Make Truncation/Mapping Barplot
+hicup_data %>%
+  select(28:31) %>%
+    gather(key="Category", value="Count") %>%
+      mutate(Category = str_replace_all(string=Category, pattern = '_', replacement = ' ')) -> dedup_data
+
+
+```
