@@ -17,7 +17,7 @@ rm(list = ls())
 # Truncation & Mapping
 ```{r, import_data, echo=FALSE}
 
-file <- "HiCUP_summary_report_UnjOgSSlxX_12-39-04_22-06-2020.txt"
+file <- "4HiCUP_summary_report_UnjOgSSlxX_12-39-04_22-06-2020.txt"
 hicup_data <- read_tsv(file)
 ```
 
@@ -85,7 +85,7 @@ knitr::kable(map_data_table, digits = 0, format.args = list(big.mark = ","))
 ```{r, filtering, echo=FALSE}
 #Make Truncation/Mapping Barplot
 hicup_data %>%
-  select(20:27) %>%
+  select( c(20, 24:30)) %>%
     gather(key="Category", value="Count") %>%
       mutate(Category = str_replace_all(string=Category, pattern = '_', replacement = ' ')) -> filter_data
 
@@ -125,9 +125,40 @@ knitr::kable(filter_data_table, digits = 0, format.args = list(big.mark = ","))
 ```{r, deduplication, echo=FALSE}
 #Make Truncation/Mapping Barplot
 hicup_data %>%
-  select(28:31) %>%
+  select(c(20:23), c(31:34)) %>%
     gather(key="Category", value="Count") %>%
-      mutate(Category = str_replace_all(string=Category, pattern = '_', replacement = ' ')) -> dedup_data
+      mutate(Category = str_replace_all(string=Category, pattern = '_', replacement = ' ')) %>%
+        add_column(c( rep('All Ditags', 4), rep('Unique Ditags', 4)), .before=1) %>%
+          add_column(c(rep(c('Read Pairs', 'Cis-close (<10Kbp)', 'Cis-far (>10Kbp)', 'Trans'), 2)), .before=2) %>%
+            select(1,2, 4) -> dedup_data
+
+colnames(dedup_data) <- c("Deduplicated", "Category", "Count")
+
+dedup_data %>%
+  spread(key=Deduplicated, value=Count) -> dedup_data_table
+
+
+dedup_data %>%     #Adjust to original order
+  select(Category) %>%
+    distinct() -> categories_ordered
+
+left_join(categories_ordered, dedup_data_table) -> dedup_data_table
+
+knitr::kable(dedup_data_table, digits = 0, format.args = list(big.mark = ","))
+  
+dedup_data_table %>%
+  slice(4,3,2) %>%    #Remove a row
+    mutate(`All Ditags` = 100 * `All Ditags` / sum(`All Ditags`)) %>%    #Calulate percentages
+      mutate(`Unique Ditags` = 100 * `Unique Ditags` / sum(`Unique Ditags`)) %>%
+        gather(`All Ditags`, `Unique Ditags`, key="Deduplicated", value = "Percentage") -> dedup_data_graph
+
+dedup_data_graph$Category <- factor(dedup_data_graph$Category, 
+                                    levels = c("Trans", "Cis-far (>10Kbp)", "Cis-close (<10Kbp)"))
+
+deduplication_plot <- ggplot(dedup_data_graph, aes(x=Deduplicated, y=Percentage, fill=Category)) + 
+  geom_bar(position="stack", stat="identity")
+
+ggplotly(deduplication_plot)
 
 
 ```
