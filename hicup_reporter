@@ -186,10 +186,11 @@ foreach my $summary_group (keys %summary_data){
     my @results_categories = qw(File Total_Reads_1 Total_Reads_2 Not_Truncated_Reads_1 Not_Truncated_Reads_2 Truncated_Read_1 
         Truncated_Read_2 Average_Length_Truncated_1 Average_Length_Truncated_2 Too_Short_To_Map_Read_1 Too_Short_To_Map_Read_2 
         Unique_Alignments_Read_1 Unique_Alignments_Read_2 Multiple_Alignments_Read_1 Multiple_Alignments_Read_2 
-        Failed_To_Align_Read_1 Failed_To_Align_Read_2 Paired_Read_1 Paired_Read_2 Valid_Pairs Invalid_Pairs Same_Circularised 
-        Same_Dangling_Ends Same_Fragment_Internal Re_Ligation Contiguous_Sequence Wrong_Size Deduplication_Read_Pairs_Uniques 
-        Deduplication_Cis_Close_Uniques Deduplication_Cis_Far_Uniques Deduplication_Trans_Uniques Percentage_Mapped 
-        Percentage_Valid Percentage_Uniques Percentage_Unique_Trans Percentage_Ditags_Passed_Through_HiCUP);
+        Failed_To_Align_Read_1 Failed_To_Align_Read_2 Paired_Read_1 Paired_Read_2 Valid_Pairs Valid_Cis_Close Valid_Cis_Far 
+        Valid_Trans Invalid_Pairs Same_Circularised Same_Dangling_Ends Same_Fragment_Internal Re_Ligation Contiguous_Sequence 
+        Wrong_Size Deduplication_Read_Pairs_Uniques Deduplication_Cis_Close_Uniques Deduplication_Cis_Far_Uniques 
+        Deduplication_Trans_Uniques Percentage_Mapped Percentage_Valid Percentage_Uniques Percentage_Unique_Trans 
+        Percentage_Ditags_Passed_Through_HiCUP);
 
     my %summary_results;
     foreach my $category (@results_categories){
@@ -310,11 +311,12 @@ foreach my $summary_group (keys %summary_data){
         }
 
         my $filter_pairs_processed;
-        (undef, $filter_pairs_processed, $summary_results{Valid_Pairs}, undef, undef, undef, 
-        $summary_results{Invalid_Pairs}, $summary_results{Same_Circularised}, 
-        $summary_results{Same_Dangling_Ends}, $summary_results{Same_Fragment_Internal}, 
-        $summary_results{Re_Ligation}, $summary_results{Contiguous_Sequence}, 
-        $summary_results{Wrong_Size}) = split(/\t/, $filter_file_results);
+        (undef, $filter_pairs_processed, $summary_results{Valid_Pairs}, 
+        $summary_results{Valid_Cis_Close}, $summary_results{Valid_Cis_Far}, 
+        $summary_results{Valid_Trans}, $summary_results{Invalid_Pairs}, 
+        $summary_results{Same_Circularised}, $summary_results{Same_Dangling_Ends}, 
+        $summary_results{Same_Fragment_Internal}, $summary_results{Re_Ligation}, 
+        $summary_results{Contiguous_Sequence}, $summary_results{Wrong_Size}) = split(/\t/, $filter_file_results);
 
         $summary_results{Percentage_Valid} = calc_perc(
                                                         $summary_results{Valid_Pairs},
@@ -331,12 +333,23 @@ foreach my $summary_group (keys %summary_data){
             die "This should not happen!";
         }
 
+        unless( $summary_results{Valid_Pairs} = $summary_results{Valid_Cis_Close} +
+                                                $summary_results{Valid_Cis_Far} +
+                                                $summary_results{Valid_Trans} 
+                ){
+                    warn "Valid reads total ($summary_results{Valid_Pairs}) is not equal to ";
+                    warn "filtered cis-close ($summary_results{Valid_Cis_Close}) + filtered cis far ";
+                    warn "($summary_results{Valid_Cis_Far}) + filtered trans ($summary_results{Valid_Trans}\n)";
+                    die "This should not happen!";
+                }
+
         unless( $summary_results{Invalid_Pairs} == $summary_results{Same_Circularised} +  $summary_results{Same_Dangling_Ends} +
         $summary_results{Same_Fragment_Internal} + $summary_results{Re_Ligation} +  $summary_results{Contiguous_Sequence} +
         $summary_results{Wrong_Size} ) {
             warn "Total Invalid Pairs ($summary_results{Invalid_Pairs}) does not correspond to sum of artefacts (Same Circularised etc.)\n";
             die "This should not happen!";
         }
+
 
         #Extract deduplicator summary results 
         my @deduplicater_results = @{$summary_data{$summary_group}->{$deduplicater_summaryfile} };  #Contains results of other files
