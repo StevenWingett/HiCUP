@@ -158,6 +158,7 @@ foreach my $summary_group (keys %groups_summaryfiles){
 
 
 #Process each group in turn 
+my @individual_outputfiles;    #List of files to be processed by R script to generate reports
 foreach my $summary_group (keys %summary_data){
 
     #Use the deduplicater summary file to determine the files that made it all the way throught the pipeline
@@ -391,6 +392,7 @@ foreach my $summary_group (keys %summary_data){
 
         #Print results to the main collated summary file
         #but also write to individual summary files - 1 file for each HiCUP run
+        #TODO - can we link $individual_outfile to fileNamer?
         my $individual_outfile = $config{outdir} . $summary_results{File} . ".HiCUP_summary_report_" . "$summary_group.txt";
         if(-e $individual_outfile){
             warn "Output file '$individual_outfile' already exists\n";
@@ -408,15 +410,28 @@ foreach my $summary_group (keys %summary_data){
         print OUT $results_string;
         print INDIVIDUAL_OUT $results_string;
         close INDIVIDUAL_OUT or die "Could not close filehandle on '$individual_outfile' : $!";
+        push(@individual_outputfiles, abs_path($individual_outfile));   #A list of files to process with the R script
     }
 
     close OUT or die "Could not close filehandle on '$outfile' : $!";
+
 }
 
-
-#TODO Use plot.ly/R to produce a summary report
 print "Created combined summary reports\n" unless $config{quiet};
 
+#Create HTML summary reports
+print Dumper \@individual_outputfiles;
+foreach my $individual_outfile (@individual_outputfiles){
+    my $output_html_report_name = $individual_outfile;
+    $output_html_report_name =~ s/txt$/html/;    #TODO can we link this to fileNamer ?
+    my $command = "R -e \"rmarkdown::render('$Bin/r_scripts/hicup_reporter.rmd', ";
+    $command .= "params=list(infile='" . $individual_outfile . "'), ";
+    $command .= "output_file='" . $output_html_report_name . "')\""; 
+    print "$command\n";
+    !system($command) or warn "Could not generate HiCUP HTML summary report with run command '$command'\n";
+}
+
+print "Created HTML summary reports\n" unless $config{quiet};
 exit (0);
 
 

@@ -4,6 +4,8 @@ output:
   html_document:
     toc: true
     toc_float: true
+params:
+   infile: default.txt    #Default to be replaced by commandline argument
 ---
 
 ```{r, setup, include=FALSE}
@@ -12,13 +14,13 @@ knitr::opts_chunk$set(message = FALSE, warning = FALSE)
 library (tidyverse)
 library(plotly)
 
-rm(list = ls())
+#rm(list = ls())    #Don't do this, else it will delete params
 ```
 # Truncation & Mapping
 ```{r, import_data, echo=FALSE}
 
-file <- "4HiCUP_summary_report_UnjOgSSlxX_12-39-04_22-06-2020.txt"
-hicup_data <- read_tsv(file)
+#file <- "/bi/home/wingetts/wingetts_scratch/hicup_patches/for_rmd.txt"
+hicup_data <- read_tsv(params$infile)
 ```
 
 ```{r, truncation_mapping, echo=FALSE}

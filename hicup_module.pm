@@ -786,7 +786,7 @@ sub fileNamer {
                 }
 
                 if ($tempOutfiles) {
-                    my @tempFiles = ( "$file.ditag_size_distribution", "$file.ditag_size_distribution_HTML_report.temp" );
+                    my @tempFiles = ("$file.ditag_size_distribution", "$file.ditag_size_distribution_HTML_report.temp");
                     push( @outNames, @tempFiles );
                 }
 
@@ -843,9 +843,8 @@ sub fileNamer {
                 $file =~ s/\.dedup$//;
 
                 if ($summaryOutfile) {
-                    my $htmlSummaryFile = ("$file.HiCUP_summary_report.html");                  
+                    my $htmlSummaryFile = ("$file." . $$configRef{datestamp} . ".HiCUP_summary_report.html");                  
                     push( @outNames, $htmlSummaryFile);
-
                 }
 
                 if ($seqOutfile) {
