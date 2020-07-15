@@ -158,7 +158,7 @@ foreach my $summary_group (keys %groups_summaryfiles){
 
 
 #Process each group in turn 
-my @individual_outputfiles;    #List of files to be processed by R script to generate reports
+my %individual_outputfiles;    #List of files pairs to be processed by R script to generate reports %{ditag lengths} = final summary report
 foreach my $summary_group (keys %summary_data){
 
     #Use the deduplicater summary file to determine the files that made it all the way throught the pipeline
@@ -350,7 +350,10 @@ foreach my $summary_group (keys %summary_data){
             warn "Total Invalid Pairs ($summary_results{Invalid_Pairs}) does not correspond to sum of artefacts (Same Circularised etc.)\n";
             die "This should not happen!";
         }
-
+        
+        my (undef, $ditag_length_file) = fileNamer( $mapping_file, \%config_dummy, 'filter', 0, 0, 0, 1, 0);
+        $ditag_length_file = $config{outdir} . $ditag_length_file;
+        $individual_outputfiles{$ditag_length_file} = undef;   #Determine this value later
 
         #Extract deduplicator summary results 
         my @deduplicater_results = @{$summary_data{$summary_group}->{$deduplicater_summaryfile} };  #Contains results of other files
@@ -410,24 +413,25 @@ foreach my $summary_group (keys %summary_data){
         print OUT $results_string;
         print INDIVIDUAL_OUT $results_string;
         close INDIVIDUAL_OUT or die "Could not close filehandle on '$individual_outfile' : $!";
-        push(@individual_outputfiles, abs_path($individual_outfile));   #A list of files to process with the R script
+        $individual_outputfiles{$ditag_length_file} = abs_path($individual_outfile);    #The paired list of files to process with the R script
     }
 
     close OUT or die "Could not close filehandle on '$outfile' : $!";
-
 }
 
 print "Created combined summary reports\n" unless $config{quiet};
 
 #Create HTML summary reports
-print Dumper \@individual_outputfiles;
-foreach my $individual_outfile (@individual_outputfiles){
+foreach my $ditag_length_file (keys %individual_outputfiles){
+    my $individual_outfile = $individual_outputfiles{$ditag_length_file};
     my $output_html_report_name = $individual_outfile;
     $output_html_report_name =~ s/txt$/html/;    #TODO can we link this to fileNamer ?
-    my $command = "R -e \"rmarkdown::render('$Bin/r_scripts/hicup_reporter.rmd', ";
-    $command .= "params=list(infile='" . $individual_outfile . "'), ";
-    $command .= "output_file='" . $output_html_report_name . "')\""; 
-    print "$command\n";
+    my $command = "R -e \"rmarkdown::render('$Bin/r_scripts/hicup_reporter.rmd', ";    #R in path
+    $command .= "params=list(infile='" . $individual_outfile . "', ditagfile='" . $ditag_length_file . "'), ";
+    $command .= "intermediates_dir='" . $config{outdir} ."', ";
+    $command .= "output_file='" . $output_html_report_name . "')\" "; 
+    $command .= '> /dev/null 2>&1';
+    #print "$command\n";
     !system($command) or warn "Could not generate HiCUP HTML summary report with run command '$command'\n";
 }
 

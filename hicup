@@ -436,7 +436,6 @@ if ( hasval( $config{temp} ) ) {
 }
 
 #Create the HiCUP summary reports
-print Dumper \%config;
 my $hicup_reporter_command;
 if(hasval($config{outdir})){
     $hicup_reporter_command = "$Bin/hicup_reporter $config{outdir}"

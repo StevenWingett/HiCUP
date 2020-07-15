@@ -6,6 +6,7 @@ output:
     toc_float: true
 params:
    infile: default.txt    #Default to be replaced by commandline argument
+   ditagfile: default.txt
 ---
 
 ```{r, setup, include=FALSE}
@@ -96,7 +97,7 @@ filter_data %>%
 
 #colors <- c('rgb(211,94,96)', 'rgb(128,133,133)', 'rgb(144,103,167)', 'rgb(171,104,87)', 'rgb(114,147,203)')
 #colors <- c('rgb(211,94,96)')
-colors <- c("#222F61", "#34ACF2", "#222F61", "#34ACF2", "#222F61", "#34ACF2", "#222F61")
+#colors <- c("#222F61", "#34ACF2", "#222F61", "#34ACF2", "#222F61", "#34ACF2", "#222F61")
 
 filter.pie <- plot_ly(filter_data_pie, labels = ~Category, values = ~Count, type = 'pie',
                textposition = 'inside',
@@ -104,8 +105,7 @@ filter.pie <- plot_ly(filter_data_pie, labels = ~Category, values = ~Count, type
                insidetextfont = list(color = '#FFFFFF'),
                hoverinfo = 'text',
                text = ~paste(Count),
-               marker = list(colors = colors,
-                             line = list(color = '#FFFFFF', width = 1)),
+               marker = list(line = list(color = '#FFFFFF', width = 1)),
                #The 'pull' attribute can also be used to create space between the sectors
                showlegend = FALSE)
 filter.pie <- filter.pie %>% layout( xaxis = list(showgrid = FALSE, zeroline = FALSE, showticklabels = FALSE),
@@ -118,6 +118,25 @@ filter_data %>%
   add_row(Category = "Total Pairs", Count = (hicup_data$Valid_Pairs + hicup_data$Invalid_Pairs)) -> filter_data_table
   
 knitr::kable(filter_data_table, digits = 0, format.args = list(big.mark = ","))
+
+```
+
+
+# Ditag length distribution
+```{r, ditag_lengths, echo=FALSE}
+ditag_file <- params$ditagfile
+ditag_data <- read_tsv(ditag_file)
+
+# Basic line plot with points
+ditag_data %>%
+  ggplot(aes(x=Bin, y=Frequency, group=1)) +
+    geom_line() +
+    theme_minimal() + 
+    xlab("Ditag size (bp)") + 
+    ylab("Frequency (ditags per 10bp bin)") + 
+    geom_line(color="#222F61") -> ditag_plot 
+
+ggplotly(ditag_plot)
 
 ```
 
