@@ -312,8 +312,34 @@ $config{r}     = "-r $config{r}";
 #Pipeline will zip final and intermediate data output files if 'zip:' selected
 #All files will be kept in current folder, but a new folder shall be created for hicup_filter reject sequences
 
-#Truncate sequences
+
+#Determine intra-/inter-read combinations
 my $filenames_string = filename_string_generator(%files);
+my $command = "$Bin/hicup_combiner $filenames_string";
+print "$command\n";
+!system($command) or die "Can't run '$command'.\n";
+
+print Dumper \%files;
+my %new_filenames;
+foreach my $filenameF (keys %files ){    #Rename input following combinations
+    my $perm_filenameF = $filenameF . '.permuted.fastq.gz';
+    my $perm_filenameR = $files{$filenameF} . '.permuted.fastq.gz';
+    $new_filenames{$perm_filenameF} = $perm_filenameR;
+}
+
+%files =  %new_filenames;
+
+foreach my $filename (@filenames){
+    $filename .= '.permuted.fastq.gz';
+}
+
+print Dumper \%files;
+print Dumper \@filenames;
+$config{keep} = 1;   #Let's set this to true for this pipeline
+
+
+#Truncate sequences
+$filenames_string = filename_string_generator(%files);
 
 #$config{outdir} = $outdir_temp;
 my $truncater_version;    #Stores the truncater version number

@@ -49,10 +49,9 @@ use Data::Dumper;
 ############################################################################################
 
 
-
 ###########################################
 #Options
-my $hic_junction = 'GATCGATC';   #HiC junction for DpnII
+my $hic_junction ='GATCGATC';   #HiC junction for DpnII
 my $hic_juction_nucleotides_5prime_allowed = 4;    #Number of nucletides allowed from junction (counting 5' -> 3')
 my $hic_juction_nucleotides_3prime_allowed = 4;    #Number of nucletides allowed from junction (counting 3' -> 5')
 my $minimum_read_length = 20;
@@ -98,6 +97,7 @@ print TALLY "File_Pair\tTally\tTally_Frequency\n";
 
 
 #Process files as pairs
+print "****** Combining ligation justion set to '$hic_junction' ******\n";
 print "Processing:\n";
 
 for(my $i = 0; $i < scalar @ARGV; $i += 2) {
@@ -118,8 +118,8 @@ for(my $i = 0; $i < scalar @ARGV; $i += 2) {
 	my $fh_forward = cleverOpen($file_forward);
 	my $fh_reverse = cleverOpen($file_reverse);
 	
-	my $outfile_forward = "permuted.$file_forward.fastq.gz";
-	my $outfile_reverse= "permuted.$file_reverse.fastq.gz";
+	my $outfile_forward = "$file_forward.permuted.fastq.gz";
+	my $outfile_reverse= "$file_reverse.permuted.fastq.gz";
 	
 	open( OUT_F, "| gzip -c - > $outfile_forward" ) or die "Couldn't write to file '$outfile_forward': $!";
 	open( OUT_R, "| gzip -c - > $outfile_reverse" ) or die "Couldn't write to file '$outfile_reverse': $!";
