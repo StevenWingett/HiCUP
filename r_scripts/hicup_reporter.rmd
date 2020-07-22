@@ -1,0 +1,185 @@
+---
+title: "HiCUP Summary Report"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+params:
+   infile: default.txt    #Default to be replaced by commandline argument
+   ditagfile: default.txt
+---
+
+```{r, setup, include=FALSE}
+knitr::opts_chunk$set(message = FALSE, warning = FALSE)
+
+library (tidyverse)
+library(plotly)
+
+#rm(list = ls())    #Don't do this, else it will delete params
+```
+# Truncation & Mapping
+```{r, import_data, echo=FALSE}
+
+#file <- "/bi/home/wingetts/wingetts_scratch/hicup_patches/for_rmd.txt"
+hicup_data <- read_tsv(params$infile)
+```
+
+```{r, truncation_mapping, echo=FALSE}
+#Make Truncation/Mapping Barplot
+hicup_data %>%
+  select(2:19) %>%
+      rename(Average_Length_Truncated_Read_1 = Average_Length_Truncated_1) %>% 
+        rename(Average_Length_Truncated_Read_2 = Average_Length_Truncated_2) %>% 
+          gather(key="Category", value="Count") %>%
+            separate(col=Category, into=c("Category", "Read"), sep="_Reads_|_Read_") %>%
+              mutate(Category = str_replace_all(string=Category, pattern = '_', replacement = ' ')) -> trunc_map_data
+
+trunc_map_data %>%    #Remove average read length data 
+  slice(-7, -8) -> trunc_map_data_graph
+
+
+trunc_map_data_graph %>% ggplot(aes(x=factor(Category, level = unique(trunc_map_data_graph$Category)), y=Count, fill=Read)) +
+                          geom_bar(stat="identity", position=position_dodge()) + 
+                          scale_y_continuous(labels = function(x) format(x, big.mark = ",", scientific = FALSE)) + 
+                          ylab("Read Count") +
+                          theme_minimal() + 
+                          theme(axis.text.x=element_text(angle = 45, vjust = 0.5), axis.title.x=element_blank()) +
+                          scale_fill_manual(values=c("#222F61", "#34ACF2")) -> trunc_map_plot
+
+ggplotly(trunc_map_plot, tooltip="Count")
+
+trunc_map_data %>%
+  slice(1:8) %>%
+    spread(key=Read, value=Count) %>%
+      rename("Read 1" = "1") %>%
+        rename("Read 2" = "2")  -> trunc_data_table
+
+trunc_map_data %>%
+  select(Category) %>%
+    distinct() -> categories_ordered
+
+left_join(categories_ordered, trunc_data_table) %>%    #Adjust to original order
+  filter(!is.na(`Read 1`)) -> trunc_data_table
+
+trunc_data_table %>%
+  slice(4:4) -> average_truncation    #average_truncation as a separate table
+
+trunc_data_table %>%
+  slice(1:3) ->
+    trunc_data_table
+
+knitr::kable(trunc_data_table, digits = 0, format.args = list(big.mark = ","))
+knitr::kable(average_truncation, digits = 1, format.args = list(big.mark = ","))
+
+trunc_map_data %>%
+  slice(9:18) %>%
+    spread(key=Read, value=Count) %>%
+      rename("Read 1" = "1") %>%
+        rename("Read 2" = "2")  -> map_data_table
+
+left_join(categories_ordered, map_data_table) %>%    #Adjust to original order
+  filter(!is.na(`Read 1`)) -> map_data_table
+
+knitr::kable(map_data_table, digits = 0, format.args = list(big.mark = ","))
+```
+
+
+# Filtering
+```{r, filtering, echo=FALSE}
+#Make Truncation/Mapping Barplot
+hicup_data %>%
+  select( c(20, 24:30)) %>%
+    gather(key="Category", value="Count") %>%
+      mutate(Category = str_replace_all(string=Category, pattern = '_', replacement = ' ')) -> filter_data
+
+filter_data %>%
+  filter(Category != "Invalid Pairs") -> filter_data_pie
+
+#colors <- c('rgb(211,94,96)', 'rgb(128,133,133)', 'rgb(144,103,167)', 'rgb(171,104,87)', 'rgb(114,147,203)')
+#colors <- c('rgb(211,94,96)')
+#colors <- c("#222F61", "#34ACF2", "#222F61", "#34ACF2", "#222F61", "#34ACF2", "#222F61")
+
+filter.pie <- plot_ly(filter_data_pie, labels = ~Category, values = ~Count, type = 'pie',
+               textposition = 'inside',
+               textinfo = 'label+percent',
+               insidetextfont = list(color = '#FFFFFF'),
+               hoverinfo = 'text',
+               text = ~paste(Count),
+               marker = list(line = list(color = '#FFFFFF', width = 1)),
+               #The 'pull' attribute can also be used to create space between the sectors
+               showlegend = FALSE)
+filter.pie <- filter.pie %>% layout( xaxis = list(showgrid = FALSE, zeroline = FALSE, showticklabels = FALSE),
+                      yaxis = list(showgrid = FALSE, zeroline = FALSE, showticklabels = FALSE))
+
+ggplotly(filter.pie)
+
+
+filter_data %>%  
+  add_row(Category = "Total Pairs", Count = (hicup_data$Valid_Pairs + hicup_data$Invalid_Pairs)) -> filter_data_table
+  
+knitr::kable(filter_data_table, digits = 0, format.args = list(big.mark = ","))
+
+```
+
+
+# Ditag length distribution
+```{r, ditag_lengths, echo=FALSE}
+ditag_file <- params$ditagfile
+ditag_data <- read_tsv(ditag_file)
+
+# Basic line plot with points
+ditag_data %>%
+  ggplot(aes(x=Bin, y=Frequency, group=1)) +
+    geom_line() +
+    theme_minimal() + 
+    xlab("Ditag size (bp)") + 
+    ylab("Frequency (ditags per 10bp bin)") + 
+    geom_line(color="#222F61") -> ditag_plot 
+
+ggplotly(ditag_plot)
+
+```
+
+
+# Deduplication
+
+```{r, deduplication, echo=FALSE}
+#Make Truncation/Mapping Barplot
+hicup_data %>%
+  select(c(20:23), c(31:34)) %>%
+    gather(key="Category", value="Count") %>%
+      mutate(Category = str_replace_all(string=Category, pattern = '_', replacement = ' ')) %>%
+        add_column(c( rep('All Ditags', 4), rep('Unique Ditags', 4)), .before=1) %>%
+          add_column(c(rep(c('Read Pairs', 'Cis-close (<10Kbp)', 'Cis-far (>10Kbp)', 'Trans'), 2)), .before=2) %>%
+            select(1,2, 4) -> dedup_data
+
+colnames(dedup_data) <- c("Deduplicated", "Category", "Count")
+
+dedup_data %>%
+  spread(key=Deduplicated, value=Count) -> dedup_data_table
+
+
+dedup_data %>%     #Adjust to original order
+  select(Category) %>%
+    distinct() -> categories_ordered
+
+left_join(categories_ordered, dedup_data_table) -> dedup_data_table
+
+knitr::kable(dedup_data_table, digits = 0, format.args = list(big.mark = ","))
+  
+dedup_data_table %>%
+  slice(4,3,2) %>%    #Remove a row
+    mutate(`All Ditags` = 100 * `All Ditags` / sum(`All Ditags`)) %>%    #Calulate percentages
+      mutate(`Unique Ditags` = 100 * `Unique Ditags` / sum(`Unique Ditags`)) %>%
+        gather(`All Ditags`, `Unique Ditags`, key="Deduplicated", value = "Percentage") -> dedup_data_graph
+
+dedup_data_graph$Category <- factor(dedup_data_graph$Category, 
+                                    levels = c("Trans", "Cis-far (>10Kbp)", "Cis-close (<10Kbp)"))
+
+deduplication_plot <- ggplot(dedup_data_graph, aes(x=Deduplicated, y=Percentage, fill=Category)) + 
+  geom_bar(position="stack", stat="identity")
+
+ggplotly(deduplication_plot)
+
+
+```

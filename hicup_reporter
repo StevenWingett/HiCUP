@@ -1,0 +1,496 @@
+#!/usr/bin/perl
+
+###################################################################################
+###################################################################################
+##This file is Copyright (C) 2020, Steven Wingett (steven.wingett@babraham.ac.uk)##
+##                                                                               ##
+##                                                                               ##
+##This file is part of HiCUP.                                                    ##
+##                                                                               ##
+##HiCUP is free software: you can redistribute it and/or modify                  ##
+##it under the terms of the GNU General Public License as published by           ##
+##the Free Software Foundation, either version 3 of the License, or              ##
+##(at your option) any later version.                                            ##
+##                                                                               ##
+##HiCUP is distributed in the hope that it will be useful,                       ##
+##but WITHOUT ANY WARRANTY; without even the implied warranty of                 ##
+##MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the                  ##
+##GNU General Public License for more details.                                   ##
+##                                                                               ##
+##You should have received a copy of the GNU General Public License              ##
+##along with HiCUP.  If not, see <http://www.gnu.org/licenses/>.                 ##
+###################################################################################
+###################################################################################
+
+use strict;
+use warnings;
+use Getopt::Long;
+#use File::Path qw(remove_tree);
+use File::Basename;
+use Cwd qw(abs_path cwd);
+use FindBin '$Bin';
+use lib $Bin;
+use hicup_module;
+use hicup_module qw(hashVal check_no_duplicate_filename checkAligner checkAlignerIndices
+  quality_checker fileNamer datestampGenerator determineAlignerFormat);
+
+use Data::Dumper;
+
+##########################################################
+#Get user-supplied parameters
+#Option variables
+my %config = (
+    #datestamp => '',
+    help      => undef,
+    outdir    => undef,
+    quiet     => undef,
+    version   => undef,
+);
+
+my $config_result = GetOptions(    #Stores parameters
+    "help"       => \$config{help},
+    "outdir=s"   => \$config{outdir},
+    "quiet"      => \$config{quiet},
+    "version"    => \$config{version}
+);
+
+die "Command line options need to be in the correct format (hicup_reporter --help for more details).\n" unless ($config_result);
+
+if ( $config{help} ) {
+    print while (<DATA>);
+    exit(0);
+}
+
+#Print version and exit
+if ( $config{version} ) {
+    print "HiCUP Reporter v$hicup_module::VERSION\n";
+    exit(0);
+}
+
+unless(scalar (@ARGV) == 1){
+    die "Please enter ONE folder to process.\n";
+}
+
+if(!defined $config{outdir}){
+    $config{outdir} = cwd();
+} else {
+    if(-d $config{outdir}) {
+        $config{outdir} = abs_path($config{outdir});
+    } else {
+        warn "Output directory '" . $config{outdir} . "' does not exist\n";
+        die "Please adjust configuration.\n"
+    }
+} 
+$config{outdir} .= '/' unless ($config{outdir} =~ /\/$/);   #Add trailing folder forward slash
+
+print "Creating combined HiCUP summary report\n" unless $config{quiet};
+
+my $indir = abs_path($ARGV[0]);
+chomp $indir;
+
+unless(-d $indir){
+    warn "Input directory '$indir' does not exist\n";
+    die "Please adjust configuration.\n"
+}
+
+print "Reading folder '" . $indir . "'\n" unless $config{quiet};
+
+#Look in target folder for all the hicup_deduplicater files (the last step in the pipeline)
+#Identify all the reports, grouping by the unique ids in the the summary report filenames
+#Process each of these groups in term
+#Note: this is the one part of the code that does not use fileNamer in HiCUP module to determine the filenames
+my @glob_results = glob($indir . '/' . "hicup_deduplicator_summary_*");    
+my %groups_summaryfiles;    # %{group} = @[truncater_summary, mapper_summary, filter_summary, deduplicator_summary]
+my @summary_file_types = qw(truncater mapper filter deduplicator);
+
+#Check that all the summary files are present
+foreach my $group (@glob_results){
+    $group = basename($group);
+    $group =~ /^hicup_deduplicator_summary_(.+)\.txt$/;
+    $group = $1;
+
+    foreach my $summary_file_type (@summary_file_types){
+        my $summary_file = $indir . '/hicup_' . $summary_file_type . '_summary_' . "$group.txt";
+        push( @{ $groups_summaryfiles{$group} }, $summary_file);
+
+        unless(-e $summary_file){
+            warn "Could not find expected summary file: '$summary_file'\n";
+            die "Please check input files\n";
+        }
+    }
+}
+
+if(scalar (keys %groups_summaryfiles)){
+    print "\t" . scalar (keys %groups_summaryfiles) . " complete summary results groups identified in folder\n" unless $config{quiet};
+} else {
+    die "Could not identify any complete summary results groups in folder.\n";
+}
+
+
+#Check output file doesn't already exist
+{
+    my $files_exits_flag = 0;
+    foreach my $group (keys %groups_summaryfiles){
+        my $filename = $config{outdir} . "HiCUP_summary_report_" . $group . ".txt";
+        if(-e $filename) {
+            warn "Output file '$filename' already exists\n";  
+            $files_exits_flag = 1;
+        }
+    } 
+    die "Please adjust configuration.\n" if $files_exits_flag;
+}
+
+
+#Write all the summary results into a datastructure
+my %summary_data;    # %{summary_group} -> {summary_filename} -> @[data_line]
+foreach my $summary_group (keys %groups_summaryfiles){
+    foreach my $summary_file ( @{ $groups_summaryfiles{$summary_group} } ){
+        my $fh_in = cleverOpen($summary_file);
+        scalar <$fh_in>;    #Ignore header
+        while(<$fh_in>){
+            my $line = $_;
+            chomp $line;
+            push( @{ $summary_data{$summary_group}->{$summary_file} }, $line);
+        }
+        close $fh_in or die "Could not close '$summary_file' : $!";
+    }
+}
+
+
+#Process each group in turn 
+my %individual_outputfiles;    #List of files pairs to be processed by R script to generate reports %{ditag lengths} = final summary report
+foreach my $summary_group (keys %summary_data){
+
+    #Use the deduplicater summary file to determine the files that made it all the way throught the pipeline
+    #Determine whether --zip was selected and whether samtools was used and set the dummy config datastructure accordingly
+    #Don't collect the values now, but do this as we pass sequentially through all the summary files
+    my($truncater_summaryfile, $mapper_summaryfile, $filter_summaryfile, $deduplicater_summaryfile) = @{ $groups_summaryfiles{$summary_group} };
+    my @specimen_data = @{ $summary_data{$summary_group}->{$deduplicater_summaryfile} };
+    my ($specimen_filename) = split("\t", $specimen_data[0]);
+
+    my %config_dummy;
+    $config_dummy{r} = 0;   #Prevents initialisation error in hicup_module.pm
+
+    if($specimen_filename =~ /\.bam$/){
+        $config_dummy{samtools} = 1;
+        $config_dummy{zip} = 1;
+    } elsif($specimen_filename =~ /\.sam\.gz$/){
+        $config_dummy{zip} = 1;
+    } elsif($specimen_filename =~ /\.sam$/){    #Internal check
+        #No config options to adjust
+    } else {
+        die "Filename extension of file '$specimen_filename' in '$deduplicater_summaryfile' not recognised.\n";
+    }
+
+    #Deal with each sample one at a time!
+    #Extract truncater summary results for all the files that passed through the pipeline.
+    my @results_categories = qw(File Total_Reads_1 Total_Reads_2 Not_Truncated_Reads_1 Not_Truncated_Reads_2 Truncated_Read_1 
+        Truncated_Read_2 Average_Length_Truncated_1 Average_Length_Truncated_2 Too_Short_To_Map_Read_1 Too_Short_To_Map_Read_2 
+        Unique_Alignments_Read_1 Unique_Alignments_Read_2 Multiple_Alignments_Read_1 Multiple_Alignments_Read_2 
+        Failed_To_Align_Read_1 Failed_To_Align_Read_2 Paired_Read_1 Paired_Read_2 Valid_Pairs Valid_Cis_Close Valid_Cis_Far 
+        Valid_Trans Invalid_Pairs Same_Circularised Same_Dangling_Ends Same_Fragment_Internal Re_Ligation Contiguous_Sequence 
+        Wrong_Size Deduplication_Read_Pairs_Uniques Deduplication_Cis_Close_Uniques Deduplication_Cis_Far_Uniques 
+        Deduplication_Trans_Uniques Percentage_Mapped Percentage_Valid Percentage_Uniques Percentage_Unique_Trans 
+        Percentage_Ditags_Passed_Through_HiCUP);
+
+    my %summary_results;
+    foreach my $category (@results_categories){
+        $summary_results{$category} = undef;
+    }
+
+    #Write out the text summary results file
+    my $outfile = $config{outdir} . "HiCUP_summary_report_" . "$summary_group.txt";
+    open(OUT, '>', $outfile) or die "Could not write to '$outfile' : $!";
+    print OUT join("\t", @results_categories) . "\n";   #Print header
+
+    for (my $i = 0; $i < scalar ( @{$summary_data{$summary_group}->{$truncater_summaryfile}} ); $i++) {
+
+    	#Truncation results
+        my $truncater_results1 = ${$summary_data{$summary_group}->{$truncater_summaryfile}}[$i];
+        $i++;  #Paired results
+        my $truncater_results2 = ${$summary_data{$summary_group}->{$truncater_summaryfile}}[$i];
+
+        my $fastq_file1;
+        my $fastq_file2;
+
+        ($fastq_file1, $summary_results{Total_Reads_1}, $summary_results{Truncated_Read_1}, undef, $summary_results{Not_Truncated_Reads_1}, 
+        undef, $summary_results{Average_Length_Truncated_1}) = split("\t", $truncater_results1);
+
+    	($fastq_file2, $summary_results{Total_Reads_2}, $summary_results{Truncated_Read_2}, undef, $summary_results{Not_Truncated_Reads_2}, 
+        undef, $summary_results{Average_Length_Truncated_2}) = split("\t", $truncater_results2);
+
+    	unless($summary_results{Total_Reads_1} == $summary_results{Total_Reads_2}){
+    		die "Input reads pairs in truncater summary file do not match: $summary_results{Total_Reads_1} compared to $summary_results{Total_Reads_2}\n";
+    	}
+
+    	#Mapping results
+        my $trunc_file1 = fileNamer($fastq_file1, \%config_dummy, 'truncater');
+        my $trunc_file2 = fileNamer($fastq_file2, \%config_dummy, 'truncater');
+        my @mapping_results = @{$summary_data{$summary_group}->{$mapper_summaryfile} };
+
+        unless(scalar(@mapping_results) == 2){   #Internal check
+            die "There are not 2 elements in mapping results array - this should not happen!";   
+        }
+
+        my $trunc_file1_results;
+        my $trunc_file2_results;
+        foreach my $line (@mapping_results){
+            my ($line_filename) = split(/\t/, $line);
+            if($line_filename eq $trunc_file1){
+                $trunc_file1_results = $line;
+            } elsif($line_filename eq $trunc_file2) {
+                $trunc_file2_results = $line;
+            } else {   #Internal check
+                die "Could not find truncation filename in array - this should not happen!";
+            }
+        }
+
+        die "Could not find trunc_file1_results - this should not happen!" unless defined($trunc_file1_results); #Internal checks
+        die "Could not find trunc_file2_results - this should not happen!" unless defined($trunc_file2_results);
+
+        my $processed_reads1;
+        (undef, $processed_reads1, $summary_results{Too_Short_To_Map_Read_1}, undef, 
+        $summary_results{Unique_Alignments_Read_1}, undef, 
+        $summary_results{Multiple_Alignments_Read_1}, undef, 
+        $summary_results{Failed_To_Align_Read_1}, undef, 
+        $summary_results{Paired_Read_1}) = split(/\t/, $trunc_file1_results);
+
+        my $processed_reads2;
+        (undef, $processed_reads2, $summary_results{Too_Short_To_Map_Read_2}, undef, 
+        $summary_results{Unique_Alignments_Read_2}, undef, 
+        $summary_results{Multiple_Alignments_Read_2}, undef, 
+        $summary_results{Failed_To_Align_Read_2}, undef, 
+        $summary_results{Paired_Read_2}) = split(/\t/, $trunc_file2_results);
+        $summary_results{Percentage_Mapped} = calc_perc($summary_results{Paired_Read_1}, $processed_reads1, 2);
+        
+        #Internal checks
+        unless($processed_reads1 == $processed_reads2){
+            warn "Reads processed by mapper in file1 ($processed_reads1) does not match file2 ($processed_reads2)";
+            die "This should not happen!"
+        }
+
+        unless($processed_reads1 ==     $summary_results{Too_Short_To_Map_Read_1} + 
+                                        $summary_results{Unique_Alignments_Read_1} +
+                                        $summary_results{Multiple_Alignments_Read_1} +
+                                        $summary_results{Failed_To_Align_Read_1} ) 
+        {
+            warn "The number of processed reads1 does not match the sub-totals\n";
+            die "This should not happen!";
+        }
+        
+        unless($processed_reads2 ==     $summary_results{Too_Short_To_Map_Read_2} + 
+                                        $summary_results{Unique_Alignments_Read_2} +
+                                        $summary_results{Multiple_Alignments_Read_2} +
+                                        $summary_results{Failed_To_Align_Read_2} ) 
+        {
+            warn "The number of processed reads2 does not match the sub-totals\n";
+            die "This should not happen!";
+        }  
+
+        unless($summary_results{Paired_Read_1} == $summary_results{Paired_Read_2}) {
+            warn "Paired reads 1 ($summary_results{Paired_Read_1}) does not match ";
+            warn "paired reads 2 ($summary_results{Paired_Read_2})";
+            die "This should not happen!";
+        }  
+
+        #Extract filter summary results 
+        my @filter_results = @{$summary_data{$summary_group}->{$filter_summaryfile} };  #Contains results of other files
+        my @trunc_file_pair = ($trunc_file1, $trunc_file2);
+        my ($mapping_file) = fileNamer( \@trunc_file_pair, \%config_dummy, 'mapper');
+        my $filter_file_results;   #Results of interest
+        
+        foreach my $line (@filter_results){
+            my ($filename) = split(/\t/, $line);
+            if($filename eq $mapping_file) {
+                if(defined $filter_file_results){    #Internal check
+                    warn "The same filename ($filename) is present muliple times in '$filter_summaryfile'\n";
+                    die "This should not happen!";
+                } else {
+                    $filter_file_results = $line;
+                }
+            }
+        }
+
+        my $filter_pairs_processed;
+        (undef, $filter_pairs_processed, $summary_results{Valid_Pairs}, 
+        $summary_results{Valid_Cis_Close}, $summary_results{Valid_Cis_Far}, 
+        $summary_results{Valid_Trans}, $summary_results{Invalid_Pairs}, 
+        $summary_results{Same_Circularised}, $summary_results{Same_Dangling_Ends}, 
+        $summary_results{Same_Fragment_Internal}, $summary_results{Re_Ligation}, 
+        $summary_results{Contiguous_Sequence}, $summary_results{Wrong_Size}) = split(/\t/, $filter_file_results);
+
+        $summary_results{Percentage_Valid} = calc_perc(
+                                                        $summary_results{Valid_Pairs},
+                                                        $filter_pairs_processed, 2
+                                                    );
+        #Internal checks
+        unless($filter_pairs_processed == $summary_results{Paired_Read_1}){
+            warn "Paired reads from mapper script ($filter_pairs_processed) do not match input passed to filter script ($summary_results{Paired_Read_1})\n";
+            die "This should not happen!";
+        }
+
+        unless($filter_pairs_processed == $summary_results{Valid_Pairs} + $summary_results{Invalid_Pairs}){
+            warn "Paired Reads Processed ($filter_pairs_processed) is not equal to the total Valid Read Pairs ($summary_results{Valid_Pairs}) + Invalid Read Pairs ($summary_results{Invalid_Pairs})\n";
+            die "This should not happen!";
+        }
+
+        unless( $summary_results{Valid_Pairs} = $summary_results{Valid_Cis_Close} +
+                                                $summary_results{Valid_Cis_Far} +
+                                                $summary_results{Valid_Trans} 
+                ){
+                    warn "Valid reads total ($summary_results{Valid_Pairs}) is not equal to ";
+                    warn "filtered cis-close ($summary_results{Valid_Cis_Close}) + filtered cis far ";
+                    warn "($summary_results{Valid_Cis_Far}) + filtered trans ($summary_results{Valid_Trans}\n)";
+                    die "This should not happen!";
+                }
+
+        unless( $summary_results{Invalid_Pairs} == $summary_results{Same_Circularised} +  $summary_results{Same_Dangling_Ends} +
+        $summary_results{Same_Fragment_Internal} + $summary_results{Re_Ligation} +  $summary_results{Contiguous_Sequence} +
+        $summary_results{Wrong_Size} ) {
+            warn "Total Invalid Pairs ($summary_results{Invalid_Pairs}) does not correspond to sum of artefacts (Same Circularised etc.)\n";
+            die "This should not happen!";
+        }
+        
+        my (undef, $ditag_length_file) = fileNamer( $mapping_file, \%config_dummy, 'filter', 0, 0, 0, 1, 0);
+        $ditag_length_file = $config{outdir} . $ditag_length_file;
+        $individual_outputfiles{$ditag_length_file} = undef;   #Determine this value later
+
+        #Extract deduplicator summary results 
+        my @deduplicater_results = @{$summary_data{$summary_group}->{$deduplicater_summaryfile} };  #Contains results of other files
+        my ($filter_file) = fileNamer( $mapping_file, \%config_dummy, 'filter');
+        my $deduplicater_file_results;   #Results of interest
+        
+        foreach my $line (@deduplicater_results){
+            my ($filename) = split(/\t/, $line);
+            if($filename eq $filter_file) {
+                if(defined $deduplicater_file_results){    #Internal check
+                    warn "The same filename ($filename) is present muliple times in '$deduplicater_summaryfile'\n";
+                    die "This should not happen!";
+                } else {
+                    $deduplicater_file_results = $line;
+                    $summary_results{File} = fileNamer($filename, \%config_dummy, 'deduplicator');
+                    $summary_results{File} = fileNamer($summary_results{File}, \%config_dummy, 'hicup');   #Deducing final file is 2-step process
+                }
+            }
+        }
+        
+        my $dedplicator_pairs_processed;
+        (undef, $dedplicator_pairs_processed, 
+            $summary_results{Deduplication_Read_Pairs_Uniques}, 
+            $summary_results{Deduplication_Cis_Close_Uniques}, 
+            $summary_results{Deduplication_Cis_Far_Uniques}, 
+            $summary_results{Deduplication_Trans_Uniques}) 
+                = split(/\t/, $deduplicater_file_results);
+        
+
+        $summary_results{Percentage_Uniques} 
+            = calc_perc($summary_results{Deduplication_Read_Pairs_Uniques}, 
+                        $dedplicator_pairs_processed, 2);
+
+        $summary_results{Percentage_Unique_Trans} = 
+            calc_perc( $summary_results{Deduplication_Trans_Uniques}, $summary_results{Deduplication_Read_Pairs_Uniques}, 2);
+
+        $summary_results{Percentage_Ditags_Passed_Through_HiCUP} = calc_perc($summary_results{Deduplication_Read_Pairs_Uniques}, $summary_results{Total_Reads_1}, 2);
+	  
+
+        #Print results to the main collated summary file
+        #but also write to individual summary files - 1 file for each HiCUP run
+        #TODO - can we link $individual_outfile to fileNamer?
+        my $individual_outfile = $config{outdir} . $summary_results{File} . ".HiCUP_summary_report_" . "$summary_group.txt";
+        if(-e $individual_outfile){
+            warn "Output file '$individual_outfile' already exists\n";
+            die "Please adjust configuration.\n";
+        }
+        
+        open(INDIVIDUAL_OUT, '>', $individual_outfile) or die "Could not write to '$individual_outfile' : $!";
+        print INDIVIDUAL_OUT join("\t", @results_categories) . "\n";   #Print header
+
+        my $results_string = '';
+        foreach my $category (@results_categories) {
+            $results_string .= $summary_results{$category} . "\t";
+        }
+        $results_string =~ s/\t$/\n/;   #Replace trailing tab with newline
+        print OUT $results_string;
+        print INDIVIDUAL_OUT $results_string;
+        close INDIVIDUAL_OUT or die "Could not close filehandle on '$individual_outfile' : $!";
+        $individual_outputfiles{$ditag_length_file} = abs_path($individual_outfile);    #The paired list of files to process with the R script
+    }
+
+    close OUT or die "Could not close filehandle on '$outfile' : $!";
+}
+
+print "Created combined summary reports\n" unless $config{quiet};
+
+#Create HTML summary reports
+foreach my $ditag_length_file (keys %individual_outputfiles){
+    my $individual_outfile = $individual_outputfiles{$ditag_length_file};
+    my $output_html_report_name = $individual_outfile;
+    $output_html_report_name =~ s/txt$/html/;    #TODO can we link this to fileNamer ?
+    my $command = "R -e \"rmarkdown::render('$Bin/r_scripts/hicup_reporter.rmd', ";    #R in path
+    $command .= "params=list(infile='" . $individual_outfile . "', ditagfile='" . $ditag_length_file . "'), ";
+    $command .= "intermediates_dir='" . $config{outdir} ."', ";
+    $command .= "output_file='" . $output_html_report_name . "')\" "; 
+    $command .= '> /dev/null 2>&1';
+    #print "$command\n";
+    !system($command) or warn "Could not generate HiCUP HTML summary report with run command '$command'\n";
+}
+
+print "Created HTML summary reports\n" unless $config{quiet};
+exit (0);
+
+
+###################################################################################
+#Subroutines
+###################################################################################
+
+
+#######################
+##Subroutine "cleverOpen":
+##Opens a file with a filhandle suitable for the file extension
+sub cleverOpen{
+  my $file  = shift;
+  my $fh;
+  
+    if( $file =~ /\.bam$/){
+        open( $fh, "samtools view -h $file |" ) or die "Couldn't read '$file' : $!";  
+    }elsif ($file =~ /\.gz$/){
+        open ($fh,"zcat $file |") or die "Couldn't read $file : $!";
+    } else {
+        open ($fh, $file) or die "Could not read $file: $!";
+    }
+  return $fh;
+}
+
+
+
+__DATA__
+HiCUP homepage: www.bioinformatics.babraham.ac.uk/projects/hicup
+
+SYNOPSIS
+
+hicup_reporter generates summary results for the whole HiCUP pipeline
+
+hicup_reporter [OPTIONS]... [Folder]
+hicup_reporter [Folder]
+
+FUNCTION
+
+The hicup_reporter script collates the summary reports generated by the HiCUP 
+pipeline scripts (hicup_truncater, hicup_mapper etc.) and converts them into 
+collated summary text files and interactive documents containing tables and 
+plots.
+
+To run the script, pass as an argument the path to the folder containing the 
+summary files generated by the HiCUP pipeline scripts.
+
+COMMAND LINE OPTIONS
+
+--help         Print help message and exit
+--outdir       Directory to write output files
+--quiet        Suppress progress reports (except warnings)
+--version      Print the program version and exit
+
+Full instructions on running the pipeline can be found at:
+www.bioinformatics.babraham.ac.uk/projects/hicup
+
+Steven Wingett, Babraham Institute, Cambridge, UK (steven.wingett@babraham.ac.uk)
