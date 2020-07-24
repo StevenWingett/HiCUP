@@ -389,11 +389,29 @@ unless ( $config{keep} ) {
     }
 }
 
-#Filter files
+
+#Allocate reads to restriction fragments
 my @mapper_outputfiles = fileNamer( \@truncater_outputfiles, \%config, 'mapper' );
 @mapper_outputfiles = arrayAppend( \@mapper_outputfiles, $config{outdir} );
 
-$filenames_string = filename_string_generator_unpaired(@mapper_outputfiles);                                            #Use this subroutine for unpaired filenames
+$filenames_string = filename_string_generator_unpaired(@mapper_outputfiles); 
+
+$command = "$Bin/hicup_allocater $config{digest} $filenames_string";
+!system($command) or die "Can't run '$command'.\n";
+
+
+#Filter files
+#my @mapper_outputfiles = fileNamer( \@truncater_outputfiles, \%config, 'mapper' );
+#@mapper_outputfiles = arrayAppend( \@mapper_outputfiles, $config{outdir} );
+#$filenames_string = filename_string_generator_unpaired(@mapper_outputfiles);                                            #Use this subroutine for unpaired filenames
+my @filenames_string_elements = split(/\s+/, $filenames_string);
+my @mapper_outputfiles = ();   #Clear array
+foreach my $element (@filenames_string_elements){
+    $element .= '.allocated.bam';
+    push(@mapper_outputfiles, $element);
+}
+$filenames_string = join(' ', @mapper_outputfiles);
+
 
 if ( $config{zip} ) {
     !system("$Bin/hicup_filter $config{r} $datestamp_flag $config{digest} $config{longest} $outdir_flag $config{quiet} $config{shortest} $config{threads} $config{zip} $filenames_string")
@@ -470,7 +488,7 @@ if(hasval($config{outdir})){
 }
 
 print "$hicup_reporter_command\n";
-!system($hicup_reporter_command) or die "Can't run hicup_reporter.\n";
+#!system($hicup_reporter_command) or die "Can't run hicup_reporter.\n";
 
 print "HiCUP processing complete.\n" unless $config{quiet};
 
