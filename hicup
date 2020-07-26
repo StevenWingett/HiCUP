@@ -400,6 +400,17 @@ $command = "$Bin/hicup_allocater $config{digest} $filenames_string";
 !system($command) or die "Can't run '$command'.\n";
 
 
+#Pre-filter files
+foreach my $mapper_file (@mapper_outputfiles){
+    $mapper_file .= '.allocated.bam'
+}
+
+$filenames_string = filename_string_generator_unpaired(@mapper_outputfiles); 
+
+$command = "$Bin/hicup_prefilter $filenames_string";
+!system($command) or die "Can't run '$command'.\n";
+
+
 #Filter files
 #my @mapper_outputfiles = fileNamer( \@truncater_outputfiles, \%config, 'mapper' );
 #@mapper_outputfiles = arrayAppend( \@mapper_outputfiles, $config{outdir} );
@@ -407,7 +418,7 @@ $command = "$Bin/hicup_allocater $config{digest} $filenames_string";
 my @filenames_string_elements = split(/\s+/, $filenames_string);
 my @mapper_outputfiles = ();   #Clear array
 foreach my $element (@filenames_string_elements){
-    $element .= '.allocated.bam';
+    $element .= '.prefiltered.bam';
     push(@mapper_outputfiles, $element);
 }
 $filenames_string = join(' ', @mapper_outputfiles);

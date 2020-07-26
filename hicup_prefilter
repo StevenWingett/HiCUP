@@ -1,0 +1,172 @@
+#!/usr/bin/perl
+
+use strict;
+use warnings;
+use Getopt::Long;
+use POSIX ":sys_wait_h";    #for nonblocking read
+use POSIX;
+use Carp;
+use FindBin '$Bin';
+use lib $Bin;
+use hicup_module;
+use hicup_module qw(hashVal outdirFileNamer get_csome_position);
+
+use Data::Dumper;
+
+###################################################################################
+###################################################################################
+##This file is Copyright (C) 2020, Steven Wingett (steven.wingett@babraham.ac.uk)##
+##                                                                               ##
+##                                                                               ##
+##This file is part of HiCUP.                                                    ##
+##                                                                               ##
+##HiCUP is free software: you can redistribute it and/or modify                  ##
+##it under the terms of the GNU General Public License as published by           ##
+##the Free Software Foundation, either version 3 of the License, or              ##
+##(at your option) any later version.                                            ##
+##                                                                               ##
+##HiCUP is distributed in the hope that it will be useful,                       ##
+##but WITHOUT ANY WARRANTY; without even the implied warranty of                 ##
+##MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the                  ##
+##GNU General Public License for more details.                                   ##
+##                                                                               ##
+##You should have received a copy of the GNU General Public License              ##
+##along with HiCUP.  If not, see <http://www.gnu.org/licenses/>.                 ##
+###################################################################################
+###################################################################################
+
+
+#Option variables
+my %config = (
+    #digest      => '',
+    samtools    => '',
+    zip         => ''
+);
+
+##########################################################
+#Get user-supplied parameters
+my $config_result = GetOptions(
+    #"digest=s"    =>    \$config{digest},
+    "samtools=s" =>     \$config{samtools},
+    "zip"           =>  \$config{zip}
+);
+
+die "Could not parse options.\n" unless ($config_result);
+
+
+my @files = deduplicate_array(@ARGV);    #Files to be processed
+die "Please specify files to be pre-filtered\n" unless (@files);
+#die "Please specify a digest file\n" unless ($config{digest});
+$config{zip} = 1;   #Set to zip
+check_dependencies();   #Check SAMtools loaction
+
+print "Prefiltering fragments fragments\n";
+
+###################
+#Process digest file
+#print "Reading digest file $config{digest}\n";
+
+# if ( $config{digest} =~ /.*\.gz$/ ) {
+#     open( DIGEST, "zcat $config{digest} |" ) or die "Cannot open file: $!";
+# } else {
+#     open( DIGEST, $config{digest} ) or die "Cannot open file: $!";
+# }
+
+
+# my %digest_fragments;   # %{csome \t tokb_region}->{frist_base} = $last_base\t$fragment_number
+
+# while (<DIGEST>) {
+#     unless (/\w+\t\d+\t\d+\t\d+/) {
+#         next;
+#     }
+#     my $chromosome_name            = ( split /\t/ )[0];
+#     my $first_base                 = ( split /\t/ )[1];
+#     my $last_base                  = ( split /\t/ )[2];
+#     my $fragment_number            = ( split /\t/ )[3];
+#     my $ten_kb_region              = ceil( $first_base / 10000 );
+#     my $fragment_end_ten_kb_region = ceil( $last_base / 10000 );
+
+#     do {
+#         $digest_fragments{"$chromosome_name\t$ten_kb_region"}{$first_base} = "$last_base\t$fragment_number";
+#         $ten_kb_region++;
+#     } while ( $ten_kb_region <= $fragment_end_ten_kb_region );
+# }
+ 
+#Forward reads will map to the front of a restriction fragment, whereas reverse reads will map to the end.
+#Consequently we need to relate end positions to a given fragment.
+#The code below creates a "lookup" hash with fragment end positions as keys and first base pair positions as values.
+#foreach my $key ( keys %digest_fragments ) {
+#    my $chromosome = ( split( /\t/, $key ) )[0];
+#    my $first_base = ( split( /\t/, $key ) )[1];
+#    my $last_base  = ( split( /\t/, $digest_fragments{$key} ) )[0];
+#    $last_first_bases{"$chromosome\t$last_base"} = "$chromosome\t$first_base";
+#}
+#close DIGEST or die "Could not close filehandle on '$config{digest}' : $!";
+
+
+####################################
+#Read in and process mapped BAM files
+foreach my $filename (@files){
+    print "Processing $filename\n";
+    
+    if ( $filename =~ /\.gz$/ ) {
+        open( READS, "zcat $filename |" ) or die "Couldn't read $filename : $!";
+    } elsif ( $filename =~ /\.bam$/ ) {
+        if ( $config{samtools} ) {
+            open( READS, "$config{samtools} view -h $filename |" ) or die "Couldn't read $filename: $!";
+        } else {
+            die "Cannot process BAM files - either install SAMtools to process '$filename' or only provide SAM files\n";
+        }
+    }
+
+
+    my $write_command;
+    $write_command  = '| samtools view -bSh 2>/dev/null - > ';
+    my $outputfilename = "$filename.prefiltered.bam";
+ 
+    open( OUT, $write_command . $outputfilename ) or die "Could not write to $outputfilename: $!";
+
+
+    while (<READS>) {
+        my $read = $_;
+        chomp $read;
+
+        if($read =~ /^@/){    #Headers
+            print OUT "$read\n";
+            next;
+        }
+
+        print OUT "$read\n";
+    }
+    close READS or die "Could not close filehandle on ' $filename' : $!";
+}
+
+my $summary_file = 'hicup_prefilter_summary.txt';
+open(SUMMARY, '>', $summary_file) or die "Could not write to '$summary_file' : $!";
+print SUMMARY "HEADER_LINE\n";
+close SUMMARY or die "Could not close filehandle on '$summary_file' : $!";
+
+print "Prefiltering complete\n";
+
+exit(0);
+
+
+
+
+##########################################################################
+#Subroutines
+##########################################################################
+
+###########################
+#Subroutine "check_dependencies"
+#Evaluates if the relevant dependencies
+#are installed, and if so stores the path
+#in the %dependencies hash_ref
+sub check_dependencies {
+
+    #Check whether SAMtools is installed
+    if ( !system "which samtools >/dev/null 2>&1" ) {
+        $config{samtools} = `which samtools`;
+    }
+    chomp $config{samtools};
+}
