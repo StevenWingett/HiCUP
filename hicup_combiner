@@ -164,16 +164,25 @@ for(my $i = 0; $i < scalar @ARGV; $i += 2) {
 			my $readF = $permutations[$i];
 			my $readR = $permutations[$i + 1];   #Paired reads kept in adjacent elements
 			
-			my $headerF = (split(/\s/, $readF))[0];    #Use whitespace separation, else there will be differences between F and R
-			my $headerR = (split(/\s/, $readR))[0];
-			
-			if($headerF ne $headerR){
+			my @readF_elements = split(/\n/, $readF);
+			my @readR_elements = split(/\n/, $readR);
+
+			my ($header_baseF) = split(/\s/, $readF_elements[0]);    #The paired headers up until the space should be identical
+			my ($header_baseR) = split(/\s/, $readR_elements[0]);
+
+			if($header_baseF ne $header_baseR){
 				warn "Paired read headers not the same - this should not happen!!!.  See:\n";
-				warn "$headerF\n";
-				warn "$headerR\n";
+				warn "$header_baseF\n";
+				warn "$header_baseR\n";
 				die "Re-check code and/or input data.";
 			}
 			
+			$readF_elements[0] =~ s/\s+/:/g;    #Spaces will be removed by Bowtie2, truncating useful header information (so swap for colons)
+			$readR_elements[0] =~ s/\s+/:/g;
+
+			$readF = join("\n", @readF_elements) . "\n";
+			$readR = join("\n", @readR_elements) . "\n";
+		
 			print OUT_F $readF;
 			print OUT_R $readR;	
 		}
