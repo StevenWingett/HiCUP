@@ -58,7 +58,23 @@ my @files = deduplicate_array(@ARGV);    #Files to be processed
 die "Please specify files to be pre-filtered\n" unless (@files);
 #die "Please specify a digest file\n" unless ($config{digest});
 $config{zip} = 1;   #Set to zip
-check_dependencies();   #Check SAMtools loaction
+check_dependencies();   #Check SAMtools locations
+
+#Generate summary file
+my @summary_categories = ('Input_Reads', 'Input_Ditags', 'Ditag_Groups', 'Allowed_Reads', 
+                            'Allowed_Ditags');
+
+my %summary_counter;
+my $summary_header = "File\t";
+foreach my $category (@summary_categories){    #Initialise summary counter
+    $summary_counter{$category} = 0;   #Initialise
+    $summary_header .= $category . "\t";
+}
+$summary_header =~ s/\t$/\n/;    #Swap trailing tab for newline
+
+my $summary_file = 'hicup_prefilter_summary.txt';
+open(SUMMARY, '>', $summary_file) or die "Could not write to '$summary_file' : $!";
+print SUMMARY $summary_header;
 
 print "Prefiltering fragments fragments\n";
 
@@ -107,6 +123,7 @@ print "Prefiltering fragments fragments\n";
 ####################################
 #Read in and process mapped BAM files
 foreach my $filename (@files){
+
     print "Processing $filename\n";
     
     if ( $filename =~ /\.gz$/ ) {
@@ -119,14 +136,14 @@ foreach my $filename (@files){
         }
     }
 
-
     my $write_command;
     $write_command  = '| samtools view -bSh 2>/dev/null - > ';
     my $outputfilename = "$filename.prefiltered.bam";
  
     open( OUT, $write_command . $outputfilename ) or die "Could not write to $outputfilename: $!";
 
-
+    my $previous_ditag_group_id;
+    my @grouped_ditags;
     while (<READS>) {
         my $read = $_;
         chomp $read;
@@ -136,14 +153,55 @@ foreach my $filename (@files){
             next;
         }
 
-        print OUT "$read\n";
+        $summary_counter{Input_Reads}++;
+        $summary_counter{Input_Ditags} += 0.5;
+
+
+        #Get the di-tag group id from the header
+        #Ditags groups should be on adjacent lines in the file
+        my ($ditag_group_id) = split(/\t/, $read);
+        $ditag_group_id = (split(/:/, $ditag_group_id))[-2];
+        $ditag_group_id = (split(/\./, $ditag_group_id))[0];
+        #print "$ditag_group_id\n";
+
+
+        if( (defined $previous_ditag_group_id) and ($ditag_group_id != $previous_ditag_group_id) ){    #A new di-tag group
+            
+            my @prefiltered_ditags = prefilter_ditag_group(@grouped_ditags);
+            die "Internal error or file corrupted." unless ( @prefiltered_ditags);
+            foreach my $prefiltered_ditag(@prefiltered_ditags){
+                print OUT "$prefiltered_ditag\n";
+            }
+            @grouped_ditags = ();    #Reset array
+            push(@grouped_ditags, $read);    #Now add current read
+        
+        } else {   #Grouping ditags
+            push(@grouped_ditags, $read);
+        }
+
+        $previous_ditag_group_id = $ditag_group_id;
     }
     close READS or die "Could not close filehandle on ' $filename' : $!";
+
+ 
+    #Add final ditag group in file
+    my @prefiltered_ditags = prefilter_ditag_group(@grouped_ditags);
+    die "Internal error or file corrupted." unless (@prefiltered_ditags);
+    foreach my $prefiltered_ditag(@prefiltered_ditags){
+        print OUT "$prefiltered_ditag\n";
+    }
+
+    #Print summary results
+    my $summary_results_line = "$filename\t";
+    foreach my $category (@summary_categories){    #Initialis summary counter
+        $summary_results_line .= $summary_counter{$category} . "\t";
+        $summary_counter{$category} = 0;    #Reset to 0
+    }
+
+    $summary_results_line  =~ s/\t$/\n/;    #Swap trailing tab for newline
+    print SUMMARY $summary_results_line;
 }
 
-my $summary_file = 'hicup_prefilter_summary.txt';
-open(SUMMARY, '>', $summary_file) or die "Could not write to '$summary_file' : $!";
-print SUMMARY "HEADER_LINE\n";
 close SUMMARY or die "Could not close filehandle on '$summary_file' : $!";
 
 print "Prefiltering complete\n";
@@ -156,6 +214,31 @@ exit(0);
 ##########################################################################
 #Subroutines
 ##########################################################################
+
+###########################
+#Subroutine "prefilter_ditag_group"
+#Takes and array of reads in the di-tag group
+#and returns the prefiltered array
+sub prefilter_ditag_group {
+    my @ditag_group = @_;
+    if((@ditag_group) % 2){
+        warn "Input ditag does not contain an even number of members:";
+        foreach my $read(@ditag_group){
+            warn "$read\n";
+        }
+        warn "This should not happen!\n";
+        return my @empty;
+    }
+
+    $summary_counter{Ditag_Groups}++;    #Declared outside of subroutine
+
+    return @ditag_group ;
+
+}
+
+
+
+
 
 ###########################
 #Subroutine "check_dependencies"
