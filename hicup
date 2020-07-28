@@ -319,7 +319,7 @@ my $command = "$Bin/hicup_combiner $filenames_string";
 print "$command\n";
 !system($command) or die "Can't run '$command'.\n";
 
-print Dumper \%files;
+
 my %new_filenames;
 foreach my $filenameF (keys %files ){    #Rename input following combinations
     my $perm_filenameF = $filenameF . '.permuted.fastq.gz';
@@ -333,8 +333,7 @@ foreach my $filename (@filenames){
     $filename .= '.permuted.fastq.gz';
 }
 
-print Dumper \%files;
-print Dumper \@filenames;
+
 $config{keep} = 1;   #Let's set this to true for this pipeline
 
 
@@ -416,7 +415,7 @@ $command = "$Bin/hicup_prefilter $filenames_string";
 #@mapper_outputfiles = arrayAppend( \@mapper_outputfiles, $config{outdir} );
 #$filenames_string = filename_string_generator_unpaired(@mapper_outputfiles);                                            #Use this subroutine for unpaired filenames
 my @filenames_string_elements = split(/\s+/, $filenames_string);
-my @mapper_outputfiles = ();   #Clear array
+@mapper_outputfiles = ();   #Clear array
 foreach my $element (@filenames_string_elements){
     $element .= '.prefiltered.bam';
     push(@mapper_outputfiles, $element);
@@ -500,6 +499,21 @@ if(hasval($config{outdir})){
 
 print "$hicup_reporter_command\n";
 #!system($hicup_reporter_command) or die "Can't run hicup_reporter.\n";
+
+#Create simple summary report
+my $combined_summary_filename = 'hicup_combinations_pipeline_summary_report.txt';
+$command = 'cat permutations_summary.txt > ' . $combined_summary_filename;
+!system($command) or die "Could not run command: '$command'";
+$command = 'cat hicup_truncater_summary_** >> ' . $combined_summary_filename;
+!system($command) or die "Could not run command: '$command'";
+$command = 'cat hicup_mapper_summary_** >> ' . $combined_summary_filename;
+!system($command) or die "Could not run command: '$command'";
+$command = 'cat hicup_prefilter_summary.txt >> ' . $combined_summary_filename;
+!system($command) or die "Could not run command: '$command'";
+$command = 'cat hicup_filter_summary_** >> ' . $combined_summary_filename;
+!system($command) or die "Could not run command: '$command'";
+$command = 'cat hicup_deduplicator_summary_** >> ' . $combined_summary_filename;
+!system($command) or die "Could not run command: '$command'";
 
 print "HiCUP processing complete.\n" unless $config{quiet};
 
