@@ -61,8 +61,8 @@ $config{zip} = 1;   #Set to zip
 check_dependencies();   #Check SAMtools locations
 
 #Generate summary file
-my @summary_categories = ('Input_Reads', 'Input_Ditags', 'Ditag_Groups', 'Allowed_Reads', 
-                            'Allowed_Ditags');
+my @summary_categories = ('Input_Reads', 'Input_Ditags', 'Ditag_Groups', 'Novel_Self_Ditag', 
+                            'Novel_Fragment_Fragment_Duplicates', 'Allowed_Reads', 'Allowed_Ditags');
 
 my %summary_counter;
 my $summary_header = "File\t";
@@ -168,9 +168,11 @@ foreach my $filename (@files){
         if( (defined $previous_ditag_group_id) and ($ditag_group_id != $previous_ditag_group_id) ){    #A new di-tag group
             
             my @prefiltered_ditags = prefilter_ditag_group(@grouped_ditags);
-            die "Internal error or file corrupted." unless ( @prefiltered_ditags);
+            #die "Internal error or file corrupted." unless ( @prefiltered_ditags);   - Is possible for this to be empty
             foreach my $prefiltered_ditag(@prefiltered_ditags){
                 print OUT "$prefiltered_ditag\n";
+                $summary_counter{Allowed_Reads}++;
+                $summary_counter{Allowed_Ditags} += 0.5;
             }
             @grouped_ditags = ();    #Reset array
             push(@grouped_ditags, $read);    #Now add current read
@@ -186,9 +188,11 @@ foreach my $filename (@files){
  
     #Add final ditag group in file
     my @prefiltered_ditags = prefilter_ditag_group(@grouped_ditags);
-    die "Internal error or file corrupted." unless (@prefiltered_ditags);
+    #die "Internal error or file corrupted." unless (@prefiltered_ditags);   -is possible for this to be empty
     foreach my $prefiltered_ditag(@prefiltered_ditags){
         print OUT "$prefiltered_ditag\n";
+        $summary_counter{Allowed_Reads}++;
+        $summary_counter{Allowed_Ditags} += 0.5;
     }
 
     #Print summary results
@@ -232,8 +236,55 @@ sub prefilter_ditag_group {
 
     $summary_counter{Ditag_Groups}++;    #Declared outside of subroutine
 
-    return @ditag_group ;
+    my %interaction_tracker;  # %{fragment_fragment_interaction} = undef;
 
+    #Remove same internal fragments if they wouldn't be created by hicup
+    #Therefore, the only allowed same fragments will only be F1-R1 interactions
+    my @allowed_reads;    #Reads that pass prefiltering (paired reads in adjacent elements)
+    for (my $i=0; $i < scalar(@ditag_group); $i += 2){
+        my $j = $i + 1;
+
+        my $read1 = $ditag_group[$i];
+        my ($read1_header) = split(/\t/, $read1);
+        my $read1_fragment = (split(/:/, $read1_header))[-1];
+        my $read1_id = (split(/:/, $read1_header))[-2];
+        my $read1_classifier = (split(/\./, $read1_id))[1];
+        #print "$read1_fragment\n";
+        #print "$read1_classifier\n";
+
+        my $read2 = $ditag_group[$j];
+        my ($read2_header) = split(/\t/, $read2);
+        my $read2_fragment = (split(/:/, $read2_header))[-1];
+        my $read2_id = (split(/:/, $read2_header))[-2];
+        my $read2_classifier = (split(/\./, $read2_id))[1];
+
+        if($read1_fragment eq $read2_fragment){
+            unless( (($read1_classifier eq 'F_ORIGINAL') or ($read1_classifier eq 'F1')) and (($read2_classifier eq 'R_ORIGINAL') or ($read2_classifier eq 'R1')) ){   #This could be a normal HiCUP same-fragment
+                #print "$read1\n$read2\n\n";
+                $summary_counter{Novel_Self_Ditag}++;
+                next;    #This is a newly generated same-same fragment.  Don't use.
+            }
+        }
+
+
+        #Now fiter out duplicates of identical fragment-fragment interaction found within
+        #the same di-tag group
+        my $frag_frag_interaction;
+        if ( (  $read1_fragment cmp $read2_fragment ) == 1 ) {   #Standardised naming
+            $frag_frag_interaction = "$read2_fragment\t$read1_fragment";
+        } else {
+            $frag_frag_interaction = "$read1_fragment\t$read2_fragment";
+        }
+
+        if(exists $interaction_tracker{$frag_frag_interaction}){   #Already encountered this fragment-fragment interaction
+             $summary_counter{Novel_Fragment_Fragment_Duplicates}++;
+        } else {
+            push(@allowed_reads, ($read1, $read2));
+            $interaction_tracker{$frag_frag_interaction} = undef;   #Keep a record of this
+        }
+    }
+    #print Dumper \@allowed_reads if (scalar @allowed_reads);
+   return @allowed_reads;
 }
 
 
