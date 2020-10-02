@@ -4,9 +4,6 @@ output:
   html_document:
     toc: true
     toc_float: true
-params:
-   infile: default.txt    #Default to be replaced by commandline argument
-   ditagfile: default.txt
 ---
 
 ```{r, setup, include=FALSE}
@@ -15,13 +12,13 @@ knitr::opts_chunk$set(message = FALSE, warning = FALSE)
 library (tidyverse)
 library(plotly)
 
-#rm(list = ls())    #Don't do this, else it will delete params
+rm(list = ls())
 ```
 # Truncation & Mapping
 ```{r, import_data, echo=FALSE}
 
-#file <- "/bi/home/wingetts/wingetts_scratch/hicup_patches/for_rmd.txt"
-hicup_data <- read_tsv(params$infile)
+file <- "4HiCUP_summary_report_UnjOgSSlxX_12-39-04_22-06-2020.txt"
+hicup_data <- read_tsv(file)
 ```
 
 ```{r, truncation_mapping, echo=FALSE}
@@ -46,7 +43,7 @@ trunc_map_data_graph %>% ggplot(aes(x=factor(Category, level = unique(trunc_map_
                           theme(axis.text.x=element_text(angle = 45, vjust = 0.5), axis.title.x=element_blank()) +
                           scale_fill_manual(values=c("#222F61", "#34ACF2")) -> trunc_map_plot
 
-ggplotly(trunc_map_plot, tooltip="Count")
+##ggplotly(trunc_map_plot, tooltip="Count")
 
 trunc_map_data %>%
   slice(1:8) %>%
@@ -68,8 +65,8 @@ trunc_data_table %>%
   slice(1:3) ->
     trunc_data_table
 
-knitr::kable(trunc_data_table, digits = 0, format.args = list(big.mark = ","))
-knitr::kable(average_truncation, digits = 1, format.args = list(big.mark = ","))
+#knitr::kable(trunc_data_table, digits = 0, format.args = list(big.mark = ","))
+#knitr::kable(average_truncation, digits = 1, format.args = list(big.mark = ","))
 
 trunc_map_data %>%
   slice(9:18) %>%
@@ -80,9 +77,29 @@ trunc_map_data %>%
 left_join(categories_ordered, map_data_table) %>%    #Adjust to original order
   filter(!is.na(`Read 1`)) -> map_data_table
 
+#knitr::kable(map_data_table, digits = 0, format.args = list(big.mark = ","))
+```
+
+### Truncation Frequency
+```{r, truncation_frequency, echo=FALSE}
+knitr::kable(trunc_data_table, digits = 0, format.args = list(big.mark = ","))
+
+```
+
+### Truncated Read Length
+```{r, truncation_length, echo=FALSE}
+knitr::kable(average_truncation, digits = 1, format.args = list(big.mark = ","))
+```
+
+### Mapping Efficiency
+```{r, mapping_efficieny, echo=FALSE}
 knitr::kable(map_data_table, digits = 0, format.args = list(big.mark = ","))
 ```
 
+### Truncation and Mapping Bar Plot
+```{r, truncation_plot, echo=FALSE}
+ggplotly(trunc_map_plot, tooltip="Count")
+```
 
 # Filtering
 ```{r, filtering, echo=FALSE}
@@ -93,11 +110,12 @@ hicup_data %>%
       mutate(Category = str_replace_all(string=Category, pattern = '_', replacement = ' ')) -> filter_data
 
 filter_data %>%
-  filter(Category != "Invalid Pairs") -> filter_data_pie
+  filter(Category != "Invalid Pairs") %>%
+  arrange(desc(Count)) -> filter_data_pie
 
 #colors <- c('rgb(211,94,96)', 'rgb(128,133,133)', 'rgb(144,103,167)', 'rgb(171,104,87)', 'rgb(114,147,203)')
 #colors <- c('rgb(211,94,96)')
-#colors <- c("#222F61", "#34ACF2", "#222F61", "#34ACF2", "#222F61", "#34ACF2", "#222F61")
+colors <- c("#222F61", "#34ACF2", "#222F61", "#34ACF2", "#222F61", "#34ACF2", "#222F61")
 
 filter.pie <- plot_ly(filter_data_pie, labels = ~Category, values = ~Count, type = 'pie',
                textposition = 'inside',
@@ -105,26 +123,38 @@ filter.pie <- plot_ly(filter_data_pie, labels = ~Category, values = ~Count, type
                insidetextfont = list(color = '#FFFFFF'),
                hoverinfo = 'text',
                text = ~paste(Count),
-               marker = list(line = list(color = '#FFFFFF', width = 1)),
+               marker = list(colors = colors,
+                             line = list(color = '#FFFFFF', width = 1)),
                #The 'pull' attribute can also be used to create space between the sectors
                showlegend = FALSE)
 filter.pie <- filter.pie %>% layout( xaxis = list(showgrid = FALSE, zeroline = FALSE, showticklabels = FALSE),
                       yaxis = list(showgrid = FALSE, zeroline = FALSE, showticklabels = FALSE))
 
-ggplotly(filter.pie)
+#ggplotly(filter.pie)
 
 
 filter_data %>%  
   add_row(Category = "Total Pairs", Count = (hicup_data$Valid_Pairs + hicup_data$Invalid_Pairs)) -> filter_data_table
   
-knitr::kable(filter_data_table, digits = 0, format.args = list(big.mark = ","))
+#knitr::kable(filter_data_table, digits = 0, format.args = list(big.mark = ","))
 
 ```
 
 
-# Ditag length distribution
+### Filtering Breakdown by Category
+```{r, filtering_table, echo=FALSE}
+knitr::kable(filter_data_table, digits = 0, format.args = list(big.mark = ","))
+```
+
+### Filtering Breakdown Pie Chart
+```{r, filtering_pie_chart, echo=FALSE}
+ggplotly(filter.pie)
+```
+
+# Ditag Length Distribution
+### Frequency Line Plot
 ```{r, ditag_lengths, echo=FALSE}
-ditag_file <- params$ditagfile
+ditag_file <- "test_dataset1_2.ditag_size_distribution_HTML_report.txt"
 ditag_data <- read_tsv(ditag_file)
 
 # Basic line plot with points
@@ -137,12 +167,10 @@ ditag_data %>%
     geom_line(color="#222F61") -> ditag_plot 
 
 ggplotly(ditag_plot)
-
 ```
 
 
 # Deduplication
-
 ```{r, deduplication, echo=FALSE}
 #Make Truncation/Mapping Barplot
 hicup_data %>%
@@ -165,21 +193,39 @@ dedup_data %>%     #Adjust to original order
 
 left_join(categories_ordered, dedup_data_table) -> dedup_data_table
 
-knitr::kable(dedup_data_table, digits = 0, format.args = list(big.mark = ","))
+#knitr::kable(dedup_data_table, digits = 0, format.args = list(big.mark = ","))
   
 dedup_data_table %>%
   slice(4,3,2) %>%    #Remove a row
-    mutate(`All Ditags` = 100 * `All Ditags` / sum(`All Ditags`)) %>%    #Calulate percentages
-      mutate(`Unique Ditags` = 100 * `Unique Ditags` / sum(`Unique Ditags`)) %>%
-        gather(`All Ditags`, `Unique Ditags`, key="Deduplicated", value = "Percentage") -> dedup_data_graph
+  mutate(`All Ditags` = 100 * `All Ditags` / sum(`All Ditags`)) %>%    #Calulate percentages
+  mutate(`Unique Ditags` = 100 * `Unique Ditags` / sum(`Unique Ditags`)) %>%
+  gather(`All Ditags`, `Unique Ditags`, key="Deduplicated", value = "Percentage") -> dedup_data_graph
+
+
+#dedup_data_table %>%
+#  slice(4,3,2) -> dedup_data_graph
+
 
 dedup_data_graph$Category <- factor(dedup_data_graph$Category, 
                                     levels = c("Trans", "Cis-far (>10Kbp)", "Cis-close (<10Kbp)"))
 
 deduplication_plot <- ggplot(dedup_data_graph, aes(x=Deduplicated, y=Percentage, fill=Category)) + 
-  geom_bar(position="stack", stat="identity")
+  theme_minimal() +
+  theme(axis.title.x = element_blank()) +
+  geom_bar(position="stack", stat="identity", colour="#222F61") + 
+  scale_fill_manual(values = c("#FFFFFF", "#34ACF2", "#222F61")) 
 
-ggplotly(deduplication_plot)
 
-
+#ggplotly(deduplication_plot)
 ```
+
+### Deduplication Summary Table
+```{r, deduplication_chart, echo=FALSE}
+knitr::kable(dedup_data_table, digits = 0, format.args = list(big.mark = ","))
+```
+
+### Deduplication Bar Chart
+```{r, deduplication_barplot, echo=FALSE}
+ggplotly(deduplication_plot)
+```
+
