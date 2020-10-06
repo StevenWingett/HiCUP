@@ -4,8 +4,9 @@ output:
   html_document:
     toc: true
     toc_float: true
-
-      
+params:
+  summary_file: ''
+  ditag_lengths_file: ''    
 ---
 
 ```{r, setup, include=FALSE}
@@ -14,10 +15,8 @@ knitr::opts_chunk$set(message = FALSE, warning = FALSE)
 library (tidyverse)
 library(plotly)
 
-rm(list = ls())
-
-summary_file <- "5HiCUP_summary_report_UnjOgSSlxX_12-39-04_22-06-2020.txt"
-ditag_lengths_file <- "test_dataset1_2.ditag_size_distribution_HTML_report.txt"
+summary_file <- params$summary_file
+ditag_lengths_file <- params$ditag_lengths_file
 ```
 
 

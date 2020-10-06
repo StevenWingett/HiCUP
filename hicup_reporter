@@ -427,7 +427,7 @@ foreach my $ditag_length_file (keys %individual_outputfiles){
     my $output_html_report_name = $individual_outfile;
     $output_html_report_name =~ s/txt$/html/;    #TODO can we link this to fileNamer ?
     my $command = "R -e \"rmarkdown::render('$Bin/r_scripts/hicup_reporter.rmd', ";    #R in path
-    $command .= "params=list(infile='" . $individual_outfile . "', ditagfile='" . $ditag_length_file . "'), ";
+    $command .= "params=list(summary_file='" . $individual_outfile . "', ditag_lengths_file='" . $ditag_length_file . "'), ";
     $command .= "intermediates_dir='" . $config{outdir} ."', ";
     $command .= "output_file='" . $output_html_report_name . "')\" "; 
     $command .= '> /dev/null 2>&1';
