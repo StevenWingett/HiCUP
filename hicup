@@ -122,6 +122,8 @@ if( hasval($config{config}) ){
 }
 
 print "Starting HiCUP pipeline (v$hicup_module::VERSION)\n" unless $config{quiet};
+print "PLEASE NOTE: FROM VERSION 8, HICUP REQUIRES THE R PACKAGES TIDYVERSE AND PLOTLY INSTALLED\n";
+print "SEE DOCUMENTATION FOR MORE DETAILS\n";
 
 my @filenames;
 if( hasval($config{config}) ){
@@ -438,14 +440,19 @@ if ( hasval( $config{temp} ) ) {
 
 #Create the HiCUP summary reports
 #Navigate to the folder where the output is written and run the script there
-my $current_working_directory = cwd;
-my $hicup_reporter_command =  "$Bin/hicup_reporter .";
-if(hasval($config{outdir})){
-    chdir $config{outdir};
-    !system($hicup_reporter_command) or die "Can't run hicup_reporter.\n";
-    chdir $current_working_directory;
+if($sonication_protocol){
+    my $current_working_directory = cwd;
+    my $hicup_reporter_command =  "$Bin/hicup_reporter .";
+    if(hasval($config{outdir})){
+        chdir $config{outdir};
+        !system($hicup_reporter_command) or die "Can't run hicup_reporter.\n";
+        chdir $current_working_directory;
+    } else {
+        !system($hicup_reporter_command) or die "Can't run hicup_reporter.\n";
+    }
 } else {
-    !system($hicup_reporter_command) or die "Can't run hicup_reporter.\n";
+    print "Skipping summary report\n";
+    print "HiCUP now only collates results for sonication protocol datasets\n";
 }
 
 print "HiCUP processing complete.\n" unless $config{quiet};
