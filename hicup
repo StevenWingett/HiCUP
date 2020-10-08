@@ -8,6 +8,7 @@ use File::Path qw(remove_tree);
 use File::Basename;
 use FindBin '$Bin';
 use lib $Bin;
+use Cwd qw(cwd);
 use hicup_module;
 use hicup_module qw(hashVal check_no_duplicate_filename checkAligner checkAlignerIndices
   quality_checker fileNamer datestampGenerator determineAlignerFormat);
@@ -436,15 +437,16 @@ if ( hasval( $config{temp} ) ) {
 }
 
 #Create the HiCUP summary reports
-my $hicup_reporter_command;
+#Navigate to the folder where the output is written and run the script there
+my $current_working_directory = cwd;
+my $hicup_reporter_command =  "$Bin/hicup_reporter .";
 if(hasval($config{outdir})){
-    $hicup_reporter_command = "$Bin/hicup_reporter $config{outdir}"
+    chdir $config{outdir};
+    !system($hicup_reporter_command) or die "Can't run hicup_reporter.\n";
+    chdir $current_working_directory;
 } else {
-    $hicup_reporter_command =  "$Bin/hicup_reporter .";
+    !system($hicup_reporter_command) or die "Can't run hicup_reporter.\n";
 }
-
-print "$hicup_reporter_command\n";
-!system($hicup_reporter_command) or die "Can't run hicup_reporter.\n";
 
 print "HiCUP processing complete.\n" unless $config{quiet};
 
