@@ -8,7 +8,7 @@ our @EXPORT = qw(VERSION hasval deduplicate_array checkR process_config check_fi
 our @EXPORT_OK = qw(hashVal outdirFileNamer check_no_duplicate_filename check_filenames_ok 
     checkAligner checkAlignerIndices newopen quality_checker determineAlignerFormat get_csome_position);
 
-our $VERSION = "0.7.4";
+our $VERSION = "0.8.0";
 
 use Data::Dumper;
 use strict;
@@ -670,7 +670,8 @@ sub print_example_config_file {
 
 }
 
-#Reference to array/string of filename(s), reference to config_hash, name of script processing files
+#Reference to array of filenames / or value string the relevant filename, 
+#reference to config_hash, name of script processing files
 #1 or 0 for i) Sequence outfiles, ii) Summary file, iii) graphical file, iv) Temp files, v) other files
 #(the HiC-rejects folder)
 #If none selected, default is 1,0,0,0,0
@@ -786,7 +787,7 @@ sub fileNamer {
                 }
 
                 if ($tempOutfiles) {
-                    my @tempFiles = ( "$file.ditag_size_distribution", "$file.ditag_size_distribution_HTML_report.temp" );
+                    my @tempFiles = ("$file.ditag_size_distribution", "$file.ditag_size_distribution_report.txt");   
                     push( @outNames, @tempFiles );
                 }
 
@@ -843,9 +844,8 @@ sub fileNamer {
                 $file =~ s/\.dedup$//;
 
                 if ($summaryOutfile) {
-                    my $htmlSummaryFile = ("$file.HiCUP_summary_report.html");                  
+                    my $htmlSummaryFile = ("$file." . $$configRef{datestamp} . ".HiCUP_summary_report.html");                  
                     push( @outNames, $htmlSummaryFile);
-
                 }
 
                 if ($seqOutfile) {
@@ -948,6 +948,11 @@ sub fileNamer {
         my $rejectsFolder = "hicup_filter_ditag_rejects_" . $$configRef{datestamp};
         push( @outNames, $rejectsFolder );
     }
+
+    if ($tempOutfiles and ( $script eq 'truncater' ) ) {
+        my $tempFile =  'hicup_truncater_summary_temp_' . $$configRef{datestamp} . '.txt';
+        push(@outNames, $tempFile);
+    } 
 
     if ( $script eq 'all' ) {    #Run the whole pipeline - deduce filenames by performing a recursive function call
 
