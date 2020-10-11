@@ -12,6 +12,7 @@
 HiCUP Overview
 ##############
 
+**ATTENTION: HiCUP Version 8+ generates a new summary report text and HTML files using the new pipeline script HiCUP Reporter and a new R markdown file r_scripts/hicup_reporter.rmd.  To generate the HTML summary report requires R to be installed on your system as well as the R modules Tidyverse and Plotly.**
 
 General Information
 *******************
