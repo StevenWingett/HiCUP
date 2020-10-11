@@ -12,6 +12,7 @@
 HiCUP Overview
 ##############
 
+**ATTENTION: HiCUP Version 8+ generates new format summary report HTML and text files.  You will also notice new a pipeline script HiCUP Reporter and a new R markdown file r_scripts/hicup_reporter.rmd.  To generate the HTML summary report now requires R to be installed on your system as well as the R modules Tidyverse and Plotly.  Also, collated summary reports will no longer be generated for the rarely used for double-digest Hi-C protocol.**
 
 General Information
 *******************
