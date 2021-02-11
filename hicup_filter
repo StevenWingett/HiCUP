@@ -307,7 +307,7 @@ sub check_parameters {
 #was followed and processes accordingly, returning a hash of the results.
 sub process_digest_file {
     if ( $config{digest} =~ /.*\.gz$/ ) {
-        open( DIGEST, "gunzip -c – $config{digest} |" ) or die "Cannot open file: $!";
+        open( DIGEST, "gunzip -c $config{digest} |" ) or die "Cannot open file: $!";
     } else {
         open( DIGEST, $config{digest} ) or die "Cannot open file: $!";
     }
@@ -479,7 +479,7 @@ sub double_digest_hic {
     my $filename = $_[0];
 
     if ( $filename =~ /\.gz$/ ) {
-        open( PAIRED_READS, "gunzip -c – $filename |" ) or die "Couldn't read $filename : $!";
+        open( PAIRED_READS, "gunzip -c $filename |" ) or die "Couldn't read $filename : $!";
     } elsif ( $filename =~ /\.bam$/ ) {
         if ( $config{samtools} ) {
             open( PAIRED_READS, "$config{samtools} view -h $filename |" ) or die "Couldn't read $filename: $!";
@@ -1006,7 +1006,7 @@ sub sonicate_hic {
 
     #Open pair file
     if ( $filename =~ /\.gz$/ ) {
-        open( PAIRED_READS, "gunzip -c – $filename |" ) or die "Couldn't read $filename : $!";
+        open( PAIRED_READS, "gunzip -c $filename |" ) or die "Couldn't read $filename : $!";
     } elsif ( $filename =~ /\.bam$/ ) {
         if ( $config{samtools} ) {
             open( PAIRED_READS, "$config{samtools} view -h $filename |" ) or die "Couldn't read $filename: $!";
