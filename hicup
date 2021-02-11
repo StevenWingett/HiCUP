@@ -226,7 +226,7 @@ if ( hasval( $config{temp} ) ) {
 my $sonication_protocol = 0;                 #Is this a sonication or a double-digest protocol
 
 if ( $config{digest} =~ /\.gz$/ ) {
-    open( DIGEST, "zcat $config{digest} |" ) or die "Couldn't read file '$config{digest}' : $!";
+    open( DIGEST, "gunzip -c – $config{digest} |" ) or die "Couldn't read file '$config{digest}' : $!";
 } else {
     open( DIGEST, $config{digest} ) or die "Cannot read file read file '$config{digest}' : $!";
 }
@@ -626,7 +626,7 @@ sub filename_string_generator {
             if ( ( -s $filename1 ) > 100 ) {                    #Only perform check on small files
                 $filename1_contains_data = 1;
             } else {
-                open( FILENAME1, "zcat $filename1 |" ) or die "Couldn't read file '$filename1' : $!";
+                open( FILENAME1, "gunzip -c – $filename1 |" ) or die "Couldn't read file '$filename1' : $!";
                 while (<FILENAME1>) {
 
                     if ( $_ =~ /\S/ ) {
@@ -639,7 +639,7 @@ sub filename_string_generator {
             if ( ( -s $filename2 ) > 100 ) {    #    Only perform check on small files
                 $filename2_contains_data = 1;
             } else {
-                open( FILENAME2, "zcat $filename2 |" ) or die "Couldn't read file '$filename2' : $!";
+                open( FILENAME2, "gunzip -c – $filename2 |" ) or die "Couldn't read file '$filename2' : $!";
                 while (<FILENAME2>) {
                     if ( $_ =~ /\S/ ) {
                         $filename2_contains_data = 1;
@@ -696,7 +696,7 @@ sub filename_string_generator_unpaired {
 
             #Open the inputfile
             if ( $inputfile =~ /\.gz$/ ) {    #Compressed SAM file
-                open( INPUTFILE, "zcat $inputfile |" ) or die "Couldn't read file '$inputfile' : $!";
+                open( INPUTFILE, "gunzip -c – $inputfile |" ) or die "Couldn't read file '$inputfile' : $!";
             } elsif ( $inputfile =~ /\.bam$/ ) {    #BAM file
                 open( INPUTFILE, "$config{samtools} view -h $inputfile |" ) or die "Couldn't read file '$inputfile' : $!";
             } else {                                #SAM file
