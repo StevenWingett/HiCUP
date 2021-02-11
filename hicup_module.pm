@@ -564,7 +564,7 @@ sub quality_checker {
     my $read_count = 1;
 
     if ( $file =~ /\.gz$/ ) {
-        open( IN, "zcat $file |" ) or die "Could not read file '$file' : $!";
+        open( IN, "gunzip -c – $file |" ) or die "Could not read file '$file' : $!";
     } else {
         open( IN, $file ) or die "Could not read file '$file' : $!";
     }

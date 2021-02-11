@@ -153,7 +153,7 @@ my $fh;
 if( $file =~ /\.bam$/){
 	open( $fh, "samtools view -h $file |" ) or die "Couldn't read '$file' : $!";  
 }elsif ($file =~ /\.gz$/){
-	open ($fh,"zcat $file |") or die "Couldn't read $file : $!";
+	open ($fh,"gunzip -c – $file |") or die "Couldn't read $file : $!";
 } else {
 	open ($fh, $file) or die "Could not read $file: $!";
 }

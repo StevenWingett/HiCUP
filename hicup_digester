@@ -177,7 +177,7 @@ my $chromosome;
 foreach my $filename (@filenames) {
 
     if ( $filename =~ /.*\.gz$/ ) {
-        open( IN, "zcat $filename |" ) or die "Cannot open filename: $!";
+        open( IN, "gunzip -c – $filename |" ) or die "Cannot open filename: $!";
     } else {
         open( IN, $filename ) or die "Can't read filename: $!";
     }
