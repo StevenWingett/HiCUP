@@ -86,7 +86,7 @@ print "Reading baits file '$config{baits}'\n";
 
 
 if ( $config{baits} =~ /\.gz$/ ) {
-	open( BAITS, "zcat $config{baits} |" ) or die "Couldn't read file '$config{baits}' : $!";
+	open( BAITS, "gunzip -c $config{baits} |" ) or die "Couldn't read file '$config{baits}' : $!";
 } else {
 	open(BAITS, '<', $config{baits}) or die "Could not open '$config{baits}' : $!";
 }
@@ -164,7 +164,7 @@ foreach my $file (@ARGV){
 	if( $file =~ /\.bam$/ ) {
 		open( IN, "samtools view -h $file |" ) or die "Couldn't read '$file' : $!";
 	}elsif( $file =~ /\.gz$/ ) {
-        open( IN, "zcat $file |" ) or die "Couldn't read '$file' : $!";
+        open( IN, "gunzip -c $file |" ) or die "Couldn't read '$file' : $!";
 	} else {
         open( IN, $file ) or die "Could not read '$file' : $!";
     }

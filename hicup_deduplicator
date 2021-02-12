@@ -183,7 +183,7 @@ sub process_file {
     }
 
     if ( $file =~ /\.gz$/ ) {
-        open( IN, "zcat $file |" ) or die "Couldn't read $file : $!";
+        open( IN, "gunzip -c $file |" ) or die "Couldn't read $file : $!";
     } elsif ( $file =~ /\.bam$/ ) {
         if ( $config{samtools} ) {
             open( IN, "$config{samtools} view -h $file |" ) or die "Couldn't read $file: $!";

@@ -443,9 +443,9 @@ sub process_file {
 
     #Check whether the input file is zipped and then open accordingly
     if ( $inputfile =~ /\.gz$/ ) {
-        open( IN, "zcat $inputfile |" ) or die "Couldn't read file \'$inputfile\' : $!";
+        open( IN, "gunzip -c $inputfile |" ) or die "Couldn't read file \'$inputfile\' : $!";
     } elsif ( $inputfile =~ /\.bz2$/ ) {
-        open( IN, "bzcat $inputfile |" ) or die "Couldn't read file \'$inputfile\' : $!";
+        open( IN, "bunzip2 -c $inputfile |" ) or die "Couldn't read file \'$inputfile\' : $!";
     } else {
         open( IN, $inputfile ) or die "Couldn't read file \'$inputfile\' : $!";
     }
