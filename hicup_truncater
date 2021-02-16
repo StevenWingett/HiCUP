@@ -445,7 +445,7 @@ sub process_file {
     if ( $inputfile =~ /\.gz$/ ) {
         open( IN, "gunzip -c $inputfile |" ) or die "Couldn't read file \'$inputfile\' : $!";
     } elsif ( $inputfile =~ /\.bz2$/ ) {
-        open( IN, "bzcat $inputfile |" ) or die "Couldn't read file \'$inputfile\' : $!";
+        open( IN, "bunzip2 -c $inputfile |" ) or die "Couldn't read file \'$inputfile\' : $!";
     } else {
         open( IN, $inputfile ) or die "Couldn't read file \'$inputfile\' : $!";
     }
