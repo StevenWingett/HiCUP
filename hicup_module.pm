@@ -8,7 +8,7 @@ our @EXPORT = qw(VERSION hasval deduplicate_array checkR process_config check_fi
 our @EXPORT_OK = qw(hashVal outdirFileNamer check_no_duplicate_filename check_filenames_ok 
     checkAligner checkAlignerIndices newopen quality_checker determineAlignerFormat get_csome_position);
 
-our $VERSION = "0.8.0";
+our $VERSION = "0.8.1";
 
 use Data::Dumper;
 use strict;
@@ -564,7 +564,7 @@ sub quality_checker {
     my $read_count = 1;
 
     if ( $file =~ /\.gz$/ ) {
-        open( IN, "zcat $file |" ) or die "Could not read file '$file' : $!";
+        open( IN, "gunzip -c $file |" ) or die "Could not read file '$file' : $!";
     } else {
         open( IN, $file ) or die "Could not read file '$file' : $!";
     }

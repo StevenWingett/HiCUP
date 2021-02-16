@@ -315,7 +315,7 @@ sub map_file {
     my $line_counter = 1;
 
     if ( $inputfile =~ /.*\.gz$/ ) {
-        open( INPUT, "zcat $inputfile |" ) or die $!;
+        open( INPUT, "gunzip -c $inputfile |" ) or die $!;
 
     } else {
         open( INPUT, $inputfile ) or die $!;
@@ -547,12 +547,12 @@ sub pair {
 
     #Check whether the input file is zipped and then open accordingly
     if ( $fileForward =~ /\.gz$/ ) {
-        open( FORWARD, "zcat $fileForward |" ) or die "Couldn't read file '$fileForward : $!";
+        open( FORWARD, "gunzip -c $fileForward |" ) or die "Couldn't read file '$fileForward : $!";
     } else {
         open( FORWARD, $fileForward ) or die "Can't read \'$fileForward\' : $!";
     }
     if ( $fileForward =~ /\.gz$/ ) {
-        open( REVERSE, "zcat $fileReverse |" ) or die "Couldn't read file '$fileReverse' : $!";
+        open( REVERSE, "gunzip -c $fileReverse |" ) or die "Couldn't read file '$fileReverse' : $!";
     } else {
         open( REVERSE, $fileReverse ) or die "Can't read \'$fileReverse\' : $!";
     }
