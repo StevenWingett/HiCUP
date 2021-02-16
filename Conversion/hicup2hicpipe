@@ -71,7 +71,7 @@ foreach my $file (@files){
   print "Processing $file\n";
   
   if ($file =~ /\.gz$/){
-    open (IN,"zcat $file |") or die "Couldn't read $file : $!";  
+    open (IN,"gunzip -c $file |") or die "Couldn't read $file : $!";  
   }
   elsif ($file =~ /\.bam$/) {
     open (IN,"samtools view $file |") or die "Couldn't read $file: $!";

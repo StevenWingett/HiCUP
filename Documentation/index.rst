@@ -82,7 +82,7 @@ Requirements
 ************
 HiCUP should work on most Linux-based operating systems. It requires a working version of `Perl <http://www.perl.org>`_ and uses `Bowtie <http://bowtie-bio.sourceforge.net>`_ or `Bowtie2 <http://bowtie-bio.sourceforge.net/bowtie2>`_ to perform the mapping.  
 
-Full functionality requires `R <http://www.r-project.org>`_ (tested with version 3.1.2) and `SAM tools <http://sourceforge.net/projects/samtools>`_ (version 0.1.18 or later).
+Full functionality requires `R <http://www.r-project.org>`_ (tested using version 3.1.2), with the R modules Tidyverse and Plotly installed.  If you experience problems generating HTML summary reports using R, then you may also need to install `Pandoc <https://pandoc.org>`_ on your system.  `SAM tools <http://sourceforge.net/projects/samtools>`_ (version 0.1.18 or later) also needs to be installed.
 
 Memory requirements depend on the size of the input files, but as a rough guide allocating 2Gb of RAM per file processed simultaneously (defined by --threads argument) should suffice.
 

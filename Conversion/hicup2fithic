@@ -80,7 +80,7 @@ my %fragments;   #%{chromosome \t 10kb_region}{Start} = "End \t Midpoint";
 print "Processing the digest file '$config{digest}'\n";
 
 if($config{digest} =~ /\.gz$/){
-    open (DIGEST, "zcat $config{digest} |") or die "Could not open '$config{digest}' : $!";
+    open (DIGEST, "gunzip -c $config{digest} |") or die "Could not open '$config{digest}' : $!";
   }else{
 	open(DIGEST, '<', $config{digest}) or die "Could not open '$config{digest}' : $!";
 }	
@@ -117,7 +117,7 @@ close DIGEST or die "Could not close $config{digest} : $!";
 	print "Processing $file\n";
  
 	if ( $file =~ /\.gz$/ ) {
-        open( IN, "zcat $file |" ) or die "Couldn't read '$file' : $!";
+        open( IN, "gunzip -c $file |" ) or die "Couldn't read '$file' : $!";
     } elsif ( $file =~ /\.bam$/ ) {
             open( IN, "samtools view -h $file |" ) or die "Couldn't read '$file' : $!";
     } else {
