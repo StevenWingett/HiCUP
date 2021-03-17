@@ -1,0 +1,211 @@
+#!/usr/bin/perl
+
+use strict;
+use warnings;
+use Getopt::Long;
+use FindBin '$Bin';
+use lib "$Bin/../";
+use hicup_module;
+use hicup_module qw(get_csome_position); 
+
+########################################################################################
+########################################################################################
+## This file is Copyright (C) 2021, Steven Wingett (steven.wingett@mrc-lmb.cam.ac.uk) ##
+##                                                                                    ##
+##                                                                                    ##
+## This file is part of HiCUP.                                                        ##
+##                                                                                    ##
+## HiCUP is free software: you can redistribute it and/or modify                      ##
+## it under the terms of the GNU General Public License as published by               ##
+## the Free Software Foundation, either version 3 of the License, or                  ##
+## (at your option) any later version.                                                ##
+##                                                                                    ##
+## HiCUP is distributed in the hope that it will be useful,                           ##
+## but WITHOUT ANY WARRANTY; without even the implied warranty of                     ##
+## MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the                      ##
+## GNU General Public License for more details.                                       ##
+##                                                                                    ##
+## You should have received a copy of the GNU General Public License                  ##
+## along with HiCUP.  If not, see <http://www.gnu.org/licenses/>.                     ##
+########################################################################################
+########################################################################################
+
+
+##########################################################
+# Get user-supplied parameters
+# Option variables
+my %config = (
+    aligned => undef,
+    fastq1 => undef,
+    fastq2 => undef,
+    help => undef,
+    version => undef,
+    zip => undef
+);
+
+my $config_result = GetOptions(
+    "aligned=s" => \$config{aligned},
+    "fastq1=s" => \$config{fastq1},
+    "fastq2=s" => \$config{fastq2},
+    "help" => \$config{help},
+    "version" => \$config{version},
+	"zip" => \$config{zip}
+);
+die "Could not parse options.\n" unless ($config_result);
+
+
+if ( $config{help} ) {
+    print while (<DATA>);
+    exit(0);
+}
+
+if ( $config{version} ) {    #Print version and exit
+    print "hicup2ncc v$hicup_module::VERSION\n";
+    exit(0);
+}
+
+if(@ARGV){
+    die "You have passed an argument with no option, please try again.\n";
+}
+
+##########################################################
+# Check input
+unless( defined $config{aligned} and defined $config{fastq1} and defined $config{fastq2}){
+    die "Please specify --aligned, --fastq1, --fastq2 files.\n";
+}
+
+my @aligned_files = split(/\s/, $config{aligned});
+my @fastq1_files = split(/\s/, $config{fastq1});
+my @fastq2_files = split(/\s/, $config{fastq2});
+
+
+# Check all of equal length
+unless( (scalar @aligned_files == scalar @fastq1_files) and (scalar @aligned_files == scalar @fastq2_files ) ){
+    die "The --aligned, --fastq1 and --fastq2 values must all contain the same number of files.\n";
+}
+
+
+
+# Read in digest file to get restriction fragment positions
+
+
+
+# Read in BAM file and get positions and orientation of alignments
+foreach my $aligned_file (@aligned_files){
+  
+  print "Processing $aligned_file\n";
+  sleep(2);
+  
+  if ($aligned_file=~ /\.gz$/){
+    open (ALIGNED_IN,"gunzip -c $aligned_file |") or die "Couldn't read $aligned_file : $!";  
+  }
+  elsif ($aligned_file =~ /\.bam$/) {
+    open (ALIGNED_IN,"samtools view $aligned_file |") or die "Couldn't read $aligned_file : $!";
+  } else{
+    open (ALIGNED_IN, $aligned_file) or die "Could not open $aligned_file\n";
+  }
+  
+  my $outfile = "$aligned_file.ncc";
+  if($config{zip}){
+	  $outfile .= '.gz';
+	  open(OUT, "| gzip -c - > $outfile") or die "Could not write to '$outfile' : $!";
+  }else{
+	  open (OUT, '>', $outfile) or die "Could not write to '$outfile'\n";
+  }
+  
+  my $index = 1;
+  while(<ALIGNED_IN>){
+    if(/^@/){    #Remove SAM header lines
+      next;
+    }    
+    
+    my $readF = $_;
+    my $readR = scalar <ALIGNED_IN>;
+    chomp $readF;
+    chomp $readR; 
+
+    my ($chromosomeF, $positionF, $strandF) = get_csome_position($readF);
+    my ($chromosomeR, $positionR, $strandR) = get_csome_position($readR);
+  
+    print OUT "$index\t$chromosomeF\t$positionF\t$strandF\t$chromosomeR\t$positionR\t$strandR\n";
+    $index++;
+  }
+
+  close ALIGNED_IN or die "Could not close filehandle on '$aligned_file' : $!";
+  close OUT or die "Could not close filehandle on '$outfile' : $!";
+}
+
+
+
+
+# Read in FASTQ files to check ID corresponds to BAM and record number
+
+
+# Check whether di-tag read pair order is reversed in HiCUP BAM/SAM file as compared to
+# FASTQ input files
+
+
+
+
+
+
+__DATA__
+
+HiCUP homepage: www.bioinformatics.babraham.ac.uk/projects/hicup
+
+The hicup2ncc script converts HiCUP BAM/SAM files to NCC format, which is 
+generated by the NucProcess pipeline:
+https://github.com/tjs23/nuc_processing/wiki/NCC-data-format
+
+SYNOPSIS
+
+hicup2ncc [OPTIONS]
+hicup2ncc [SAM/BAM FILES]...
+
+FUNCTION
+
+HiCUP generates SAM/BAM files of mapped, filtered paired-end reads 
+constituting the sequenced valid Hi-C di-tags. These may then be analysed by a 
+variety of specialised tools, but before this is possible the datasets will 
+need parsing into an appropriate format.
+
+The hicup2ncc script converts HiCUP BAM/SAM files to NCC format compatible which 
+is genetated by the NucProcess pipeline:
+
+The columns of NCC files correspond to:
+
+- Name of chromosome A
+- First base position of sequence read A
+- Last base position of sequence read A
+- 5' base position of primary RE fragment containing read A
+- 3' base position of primary RE fragment containing read A
+- The strand of sequence read A
+- Name of chromosome B
+- First base position of sequence read B
+- Last base position of sequence read B
+- 5' base position of primary RE fragment containing read B
+- 3' base position of primary RE fragment containing read B
+- The strand of sequence read B
+- The number of the ambiguity group to which the paired reads belong
+- The ID number of the read pair in the original FASTQ files
+- Whether read pairs are swapped relative to original FASTQ files
+
+COMMAND LINE OPTIONS
+
+--aligned      Whitespace-separated list of HiCUP BAM/SAM files
+--digest       HiCUP digest file used in HiCUP analysis
+--fastq1       Whitespace-separated list of FASTQ (read1) files
+--fastq2       Whitespace-separated list of FASTQ (read2) files
+               The order of the aligned, fastq1 and fastq2 files
+               should correspond to one another - you may use
+               wildcards or a space-sepatated list between quotation
+               marks
+--help         Print help message and exit
+--version      Print the program version and exit
+--zip          Write output to a gzip file
+
+Full instructions on running the pipeline can be found at:
+www.bioinformatics.babraham.ac.uk/projects/hicup
+
+Steven Wingett, The MRC Laboratory of Molecular Biology, Cambridge, UK 
+(steven.wingett@mrc-lmb.cam.ac.uk)
