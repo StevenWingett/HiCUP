@@ -3,6 +3,7 @@
 use strict;
 use warnings;
 use Getopt::Long;
+use POSIX;
 use FindBin '$Bin';
 use lib "$Bin/../";
 use hicup_module;
@@ -36,6 +37,7 @@ use hicup_module qw(get_csome_position);
 # Option variables
 my %config = (
     aligned => undef,
+    digest => undef,
     fastq1 => undef,
     fastq2 => undef,
     help => undef,
@@ -45,11 +47,12 @@ my %config = (
 
 my $config_result = GetOptions(
     "aligned=s" => \$config{aligned},
+    "digest=s" => \$config{digest},
     "fastq1=s" => \$config{fastq1},
     "fastq2=s" => \$config{fastq2},
     "help" => \$config{help},
     "version" => \$config{version},
-	"zip" => \$config{zip}
+	  "zip" => \$config{zip}
 );
 die "Could not parse options.\n" unless ($config_result);
 
@@ -78,16 +81,40 @@ my @aligned_files = split(/\s/, $config{aligned});
 my @fastq1_files = split(/\s/, $config{fastq1});
 my @fastq2_files = split(/\s/, $config{fastq2});
 
-
 # Check all of equal length
 unless( (scalar @aligned_files == scalar @fastq1_files) and (scalar @aligned_files == scalar @fastq2_files ) ){
     die "The --aligned, --fastq1 and --fastq2 values must all contain the same number of files.\n";
 }
 
+unless(defined $config{digest}){
+  die "Please specify the --digest file used in the HiCUP analysis.\n";
+}
 
+
+##########################################################
+# Process Digest File
+
+print "Processing digest file '" . $config{digest} . "'\n";
 
 # Read in digest file to get restriction fragment positions
+if ( $config{digest} =~ /\.gz$/ ) {
+	open( DIGEST, "gunzip -c $config{digest} |" ) or die "Couldn't read file '$config{digest}' : $!";
+} else {
+	open(DIGEST, '<', $config{digest}) or die "Could not open '$config{digest}' : $!";
+}
 
+my %fragments;    #%{chromosome}->{10kb region}->{Start} = End
+
+scalar <DIGEST>;   #Ignore headers
+scalar <DIGEST>;
+while(<DIGEST>){
+	my $line = $_;
+	chomp $line;
+	next if $line =~ /^\s*$/;    #Ignore blank lines
+	my ($csome, $start, $end) = split(/\t/, $line);
+	add_fragment($csome, $start, $end, \%fragments);
+}
+close DIGEST or die "Could not close '$config{digest}' : $!";
 
 
 # Read in BAM file and get positions and orientation of alignments
@@ -122,12 +149,26 @@ foreach my $aligned_file (@aligned_files){
     my $readF = $_;
     my $readR = scalar <ALIGNED_IN>;
     chomp $readF;
-    chomp $readR; 
+    chomp $readR;
+    my @read_pair = ($readF, $readR);
+    my $ncc_data_line = "$index\t";   #For the output NCC file
 
-    my ($chromosomeF, $positionF, $strandF) = get_csome_position($readF);
-    my ($chromosomeR, $positionR, $strandR) = get_csome_position($readR);
-  
-    print OUT "$index\t$chromosomeF\t$positionF\t$strandF\t$chromosomeR\t$positionR\t$strandR\n";
+    foreach my $read (@read_pair){
+      my ($csome, $start, $end, $strand, $sonication_pos) = get_read_positions($read);
+      my $fragment = coord2bin($csome, $sonication_pos, \%fragments);
+
+      unless($fragment){
+        warn "Could not find the following read in the restriction digest co-ordinate system:\n";
+        warn "$read\n";
+        die "This should not happen!\n";
+      }
+
+      my (undef, $fragment_start, $fragment_end) = split(/\t/, $fragment);
+      $ncc_data_line .= join("\t", $csome, $start, $end, $fragment_start, $fragment_end, $strand). "\t";
+    }
+
+    $ncc_data_line =~ s/\t$/\n/;
+    print OUT $ncc_data_line;
     $index++;
   }
 
@@ -136,7 +177,9 @@ foreach my $aligned_file (@aligned_files){
 }
 
 
+print "Processing complete\n";
 
+exit(0);
 
 # Read in FASTQ files to check ID corresponds to BAM and record number
 
@@ -144,9 +187,111 @@ foreach my $aligned_file (@aligned_files){
 # Check whether di-tag read pair order is reversed in HiCUP BAM/SAM file as compared to
 # FASTQ input files
 
+###########################################################
+# Subroutines - maybe add modules add_fragment and coord2bin
+# to the modules files, as they are shared with get_captured_reads
+# Subroutine get_read_positions is in many ways an improvement 
+# on get_csome_position in the modules file
+###########################################################
 
 
+##########################################
+#Subroutine: add_fragment
+#Takes the bait chromosome/start/end
+#and populates the passed hash accordingly:
+#%{chromosome}->{10kb region}->{Start} = End
+#Note: if the bin/fragment spans more than one 10kb region,
+#then multiple 10 regions will be populated
+sub add_fragment {
+	my ($csome, $start, $end, $hash_ref) = @_;
+	
+	my $ten_kb_start = ceil($start / 10_000);
+	my $ten_kb_end = ceil($end/ 10_000);
+	
+	for (my $ten_kb_region = $ten_kb_start; $ten_kb_region <= $ten_kb_end; $ten_kb_region++){
+		${$hash_ref}{$csome}->{$ten_kb_region}->{$start} = $end;
+	}
+}
 
+
+##########################################
+#Subroutine: coord2bin
+#Receives a chromosome name and a position and reference to the baits hash
+#and returns the bait co-ordinates where this location is found (else returns 0)
+#%lookup_hash{chromosome}->{10kb region}->{Start} = End
+sub coord2bin{
+	my ($csome, $pos, $hash_ref) = @_;
+	my $ten_kb_region = ceil($pos / 10_000);
+
+	foreach my $start ( keys %{ $fragments{$csome}->{$ten_kb_region} }){
+		my $end = ${ $hash_ref }{$csome}->{$ten_kb_region}->{$start};
+		if ( ($start <= $pos) and ($end >= $pos) ){
+			return ("$csome\t$start\t$end");
+		}
+	}
+	return 0;    #Not makking to fragment
+}
+
+
+####################
+#Subroutine get_read_positions
+#Takes a SAM read and returns the chromosome,the start, end, strand and sonication point
+#positions, as aligned to the reference genome.
+sub get_read_positions{
+  my $read = $_[0];
+  
+  my $csome = (split(/\t/, $read))[2];
+  my $pos = (split(/\t/, $read))[3];    #Position reported in SAM/BAM file
+  my $cigar = (split(/\t/, $read))[5];
+  my $strand = (split(/\t/, $read))[1];
+
+  #Determine $genomic_length from the CIGAR string
+  # for InDel free matches we can simply use the M number in the CIGAR string
+  my $genomic_length = 0;    #Read length, when aligned to the reference genome
+  
+  if ($cigar =~ /^(\d+)M$/){ # linear match
+    $genomic_length = $1;
+  } else {    #Contains InDels
+    # parsing CIGAR string
+    my @len = split (/\D+/,$cigar); # storing the length per operation
+    my @ops = split (/\d+/,$cigar); # storing the operation
+    shift @ops; # remove the empty first element
+    die "CIGAR string contained a non-matching number of lengths and operations ($cigar)\n" unless (scalar @len == scalar @ops);
+
+    # warn "CIGAR string; $cigar\n";
+    ### determining end position of the read
+    foreach my $index(0..$#len){
+      if ($ops[$index] eq 'M'){  # standard matching bases
+        $genomic_length += $len[$index];
+      } elsif($ops[$index] eq 'I'){ 
+        # insertions do not affect the length
+      } elsif($ops[$index] eq 'D'){    # deletions do affect the length             
+        $genomic_length += $len[$index];
+      } else {
+        die "Found CIGAR operations other than M, I or D: '$ops[$index]'. Not allowed at the moment\n";
+      }
+    }
+  }
+
+  #Determine the start and end of the read on the genome
+  my $start;
+  my $end;
+  my $sonication_pos;
+  
+  if($strand & 0x10){    #Negative strand
+    $start = $pos - $genomic_length + 1;
+    $end = $pos;
+    $strand = '-';
+    $sonication_pos = $end;
+  } else {    #Positive strand
+    $start = $pos;
+    $end = $pos + $genomic_length - 1;
+    $strand = '+';
+    $sonication_pos = $start;
+  }
+
+  return($csome, $start, $end, $strand, $sonication_pos);
+}
 
 
 __DATA__
@@ -189,6 +334,9 @@ The columns of NCC files correspond to:
 - The number of the ambiguity group to which the paired reads belong
 - The ID number of the read pair in the original FASTQ files
 - Whether read pairs are swapped relative to original FASTQ files
+
+This script expects the sonication protocol to have been followed in the Hi-C 
+library construction, rather than the legacy double-digest protocol.
 
 COMMAND LINE OPTIONS
 
