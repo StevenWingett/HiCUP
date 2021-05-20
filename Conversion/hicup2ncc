@@ -6,6 +6,7 @@ use Getopt::Long;
 use POSIX;
 use FindBin '$Bin';
 use lib "$Bin/../";
+use lib "$Bin/"; #Useful for ln -s to script, but need hicup_module.pm in same dir
 use hicup_module;
 use hicup_module qw(get_csome_position); 
 
