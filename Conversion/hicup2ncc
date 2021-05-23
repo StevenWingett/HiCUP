@@ -10,6 +10,8 @@ use lib "$Bin/"; #Useful for ln -s to script, but need hicup_module.pm in same d
 use hicup_module;
 use hicup_module qw(get_csome_position); 
 
+use Data::Dumper;
+
 ########################################################################################
 ########################################################################################
 ## This file is Copyright (C) 2021, Steven Wingett (steven.wingett@mrc-lmb.cam.ac.uk) ##
@@ -99,7 +101,7 @@ print "Processing digest file '" . $config{digest} . "'\n";
 
 # Read in digest file to get restriction fragment positions
 if ( $config{digest} =~ /\.gz$/ ) {
-	open( DIGEST, "gunzip -c $config{digest} |" ) or die "Couldn't read file '$config{digest}' : $!";
+	open( DIGEST, "gunzip -c $config{digest} |" ) or die "Could not open '$config{digest}' : $!";
 } else {
 	open(DIGEST, '<', $config{digest}) or die "Could not open '$config{digest}' : $!";
 }
@@ -111,28 +113,75 @@ scalar <DIGEST>;
 while(<DIGEST>){
 	my $line = $_;
 	chomp $line;
-	next if $line =~ /^\s*$/;    #Ignore blank lines
+  next if $line =~ /^\s*$/;    #Ignore blank lines
 	my ($csome, $start, $end) = split(/\t/, $line);
 	add_fragment($csome, $start, $end, \%fragments);
 }
 close DIGEST or die "Could not close '$config{digest}' : $!";
 
 
-# Read in BAM file and get positions and orientation of alignments
-foreach my $aligned_file (@aligned_files){
+# Read in FASTQ files and BAM file in sets of threes
+for (my $i = 0; $i < scalar @aligned_files; $i++){
+  my $aligned_file = $aligned_files[$i];
+  my $fastq_file1 = $fastq1_files[$i];
+  my $fastq_file2 = $fastq2_files[$i];
   
-  print "Processing $aligned_file\n";
-  sleep(2);
-  
-  if ($aligned_file=~ /\.gz$/){
-    open (ALIGNED_IN,"gunzip -c $aligned_file |") or die "Couldn't read $aligned_file : $!";  
+  print "Processing $aligned_file with $fastq_file1 with $fastq_file2\n";
+
+  ##########################################################
+  # Process FASTQ Files
+  my $first_file_flag = 1;
+  my %fastq_indexes;    # %{index_id} = (read_number, seq1, seq2)
+  foreach my $fastq_file ($fastq_file1, $fastq_file2){
+    my $read_count = 0;
+    print "\treading $fastq_file\n";
+
+    my $fh_fastq = cleverOpen($fastq_file);
+      while(<$fh_fastq>) {
+        my $header = $_;
+        chomp $header;
+        ($header) = split(/\s/, $header);
+        $header =~ s/^@//;   #Remove @ from header
+        my $seq = scalar <$fh_fastq>;
+        chomp $seq;
+        scalar <$fh_fastq>;   #Rest of FASTQ read
+        scalar <$fh_fastq>;
+
+        $read_count++;
+
+        if($first_file_flag){
+          if(exists $fastq_indexes{$header}){
+            warn "Header '$header' found multiple time in $fastq_file1\n";
+            die "This should not happen!\n";
+          } else {
+            push( @{ $fastq_indexes{$header} }, $read_count );
+            push( @{ $fastq_indexes{$header} }, $seq );
+          }
+        
+        } else {    #Second file
+          if(exists $fastq_indexes{$header}){
+            if( ${ $fastq_indexes{$header} }[0] == $read_count){
+              push( @{ $fastq_indexes{$header} }, $seq );
+            } else {
+              warn "Read index numbers do not match for '$header'\n";
+              die "This should not happen!\n";
+            }
+          } else {
+            warn "Header '$header' not found in $fastq_file2, but found in $fastq_file1\n";
+            die "This should not happen!\n";
+          }
+        }
+      }
+    close $fh_fastq or die "Could not close filehandle on '$fastq_file' : $!";
+    $first_file_flag = 0   #Second file of pair
   }
-  elsif ($aligned_file =~ /\.bam$/) {
-    open (ALIGNED_IN,"samtools view $aligned_file |") or die "Couldn't read $aligned_file : $!";
-  } else{
-    open (ALIGNED_IN, $aligned_file) or die "Could not open $aligned_file\n";
-  }
+
+  #print Dumper \%fastq_indexes;
+
+  print "Reading $aligned_file\n";  
   
+  #Clever open
+  my $fh_aligned = cleverOpen($aligned_file);  
   my $outfile = "$aligned_file.ncc";
   if($config{zip}){
 	  $outfile .= '.gz';
@@ -141,14 +190,16 @@ foreach my $aligned_file (@aligned_files){
 	  open (OUT, '>', $outfile) or die "Could not write to '$outfile'\n";
   }
   
+  ##########################################################
+  # Process BAM Files
   my $index = 1;
-  while(<ALIGNED_IN>){
+  while(<$fh_aligned>){
     if(/^@/){    #Remove SAM header lines
       next;
     }    
     
     my $readF = $_;
-    my $readR = scalar <ALIGNED_IN>;
+    my $readR = scalar <$fh_aligned>;
     chomp $readF;
     chomp $readR;
     my @read_pair = ($readF, $readR);
@@ -168,12 +219,64 @@ foreach my $aligned_file (@aligned_files){
       $ncc_data_line .= join("\t", $csome, $start, $end, $fragment_start, $fragment_end, $strand). "\t";
     }
 
-    $ncc_data_line =~ s/\t$/\n/;
+    $ncc_data_line .= $index;    #This is the ambiguity group, which for HiCUP will be the same as the index
+    
+    #Get read position on original FASTQ file
+    my ($align_headerF) = split(/\t/, $readF);
+    my ($align_headerR) = split(/\t/, $readR);
+    my $align_seqF = (split(/\t/, $readF))[9];
+    my $align_seqR = (split(/\t/, $readR))[9];
+    my $align_strandF = (split(/\t/, $ncc_data_line))[6];
+    my $align_strandR = (split(/\t/, $ncc_data_line))[12];
+    $align_seqF = reverseComplement($align_seqF) if ($align_strandF eq '-');
+    $align_seqR = reverseComplement($align_seqR) if ($align_strandR eq '-');
+
+
+    #Check headers make sense i.e. Forward is same as Reverse
+    if($align_headerF eq $align_headerR){
+      unless(exists $fastq_indexes{$align_headerF}){
+        warn "Header '$align_headerF' in HiCUP file not found in FASTQ file\n";
+        warn "Header '$align_headerR' in HiCUP file not found in FASTQ file\n";
+        warn "$readF\n";
+        warn "$readR\n";
+        die "This should not happen!\n";
+      }
+    } else {
+      warn "Paired headers in HiCUP file do not match:\n";
+      warn "$align_headerF\n";
+      warn "$align_headerR\n";
+      warn "$readF\n";
+      warn "$readR\n";
+      die "This should not happen!\n";
+    }
+
+    my $align_headerFR = $align_headerF;   #Just to clairfy Forward same as reverse
+
+    #Check sequences
+    my $ordering;
+    if( ($align_seqF eq $fastq_indexes{$align_headerFR}[1]) and ($align_seqR eq $fastq_indexes{$align_headerFR}[2]) ){
+      $ordering = 1;   #Check this!!!!!!
+
+    } elsif( ($align_seqF eq $fastq_indexes{$align_headerFR}[2]) and ($align_seqR eq $fastq_indexes{$align_headerFR}[1]) ){
+      $ordering = 0; 
+    
+    } else {
+      warn "Sequence pair in HiCUP file do not correspond to FASTQ files:\n";
+      warn "$align_seqF\n";
+      warn "$align_seqR\n";
+      warn "$readF\n";
+      warn "$readR\n";
+      die "This should not happen!\n";
+    }
+    
+    
+    $ncc_data_line .= "\n";
+
     print OUT $ncc_data_line;
     $index++;
   }
 
-  close ALIGNED_IN or die "Could not close filehandle on '$aligned_file' : $!";
+  close $fh_aligned or die "Could not close filehandle on '$aligned_file' : $!";
   close OUT or die "Could not close filehandle on '$outfile' : $!";
 }
 
@@ -182,11 +285,8 @@ print "Processing complete\n";
 
 exit(0);
 
-# Read in FASTQ files to check ID corresponds to BAM and record number
 
 
-# Check whether di-tag read pair order is reversed in HiCUP BAM/SAM file as compared to
-# FASTQ input files
 
 ###########################################################
 # Subroutines - maybe add modules add_fragment and coord2bin
@@ -194,6 +294,43 @@ exit(0);
 # Subroutine get_read_positions is in many ways an improvement 
 # on get_csome_position in the modules file
 ###########################################################
+
+
+#####################################################################
+#Subroutines
+#####################################################################
+
+#add to module file
+
+#######################
+##Subroutine "reverseComplement":
+##Reverse complements a string
+sub reverseComplement{
+  my $seq = $_[0];
+  $seq = reverse($seq);
+  $seq =~ tr/ATGCatgc/TACGtacg/;
+  return $seq;
+}
+
+
+
+#######################
+##Subroutine "cleverOpen":
+##Opens a file with a filhandle suitable for the file extension
+sub cleverOpen{
+my $file  = shift;
+my $fh;
+
+if( $file =~ /\.bam$/){
+	open( $fh, "samtools view -h $file |" ) or die "Couldn't read '$file' : $!";  
+}elsif ($file =~ /\.gz$/){
+	open ($fh,"gunzip -c $file |") or die "Couldn't read $file : $!";
+} else {
+	open ($fh, $file) or die "Could not read $file: $!";
+}
+return $fh;
+}
+
 
 
 ##########################################
@@ -338,6 +475,9 @@ The columns of NCC files correspond to:
 
 This script expects the sonication protocol to have been followed in the Hi-C 
 library construction, rather than the legacy double-digest protocol.
+
+IMPORTANT NOTE: The order of the --aligned, --fastq1 and --fastq2 files need to
+correspond exactly to one another for correct processing.
 
 COMMAND LINE OPTIONS
 
