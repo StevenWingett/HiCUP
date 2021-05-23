@@ -131,7 +131,7 @@ for (my $i = 0; $i < scalar @aligned_files; $i++){
   ##########################################################
   # Process FASTQ Files
   my $first_file_flag = 1;
-  my %fastq_indexes;    # %{index_id} = (read_number, seq1, seq2)
+  my %fastq_indexes;    # %{index_id} = read_number
   foreach my $fastq_file ($fastq_file1, $fastq_file2){
     my $read_count = 0;
     print "\treading $fastq_file\n";
@@ -154,15 +154,12 @@ for (my $i = 0; $i < scalar @aligned_files; $i++){
             warn "Header '$header' found multiple time in $fastq_file1\n";
             die "This should not happen!\n";
           } else {
-            push( @{ $fastq_indexes{$header} }, $read_count );
-            push( @{ $fastq_indexes{$header} }, $seq );
+            $fastq_indexes{$header} = $read_count;
           }
         
         } else {    #Second file
           if(exists $fastq_indexes{$header}){
-            if( ${ $fastq_indexes{$header} }[0] == $read_count){
-              push( @{ $fastq_indexes{$header} }, $seq );
-            } else {
+            unless($fastq_indexes{$header} == $read_count){
               warn "Read index numbers do not match for '$header'\n";
               die "This should not happen!\n";
             }
@@ -193,6 +190,7 @@ for (my $i = 0; $i < scalar @aligned_files; $i++){
   ##########################################################
   # Process BAM Files
   my $index = 1;
+
   while(<$fh_aligned>){
     if(/^@/){    #Remove SAM header lines
       next;
@@ -203,8 +201,9 @@ for (my $i = 0; $i < scalar @aligned_files; $i++){
     chomp $readF;
     chomp $readR;
     my @read_pair = ($readF, $readR);
-    my $ncc_data_line = "$index\t";   #For the output NCC file
-
+    my @ditag_halves;   # @[ditag1_info, ditag2_info] - to be sorted later
+    
+ 
     foreach my $read (@read_pair){
       my ($csome, $start, $end, $strand, $sonication_pos) = get_read_positions($read);
       my $fragment = coord2bin($csome, $sonication_pos, \%fragments);
@@ -216,21 +215,28 @@ for (my $i = 0; $i < scalar @aligned_files; $i++){
       }
 
       my (undef, $fragment_start, $fragment_end) = split(/\t/, $fragment);
-      $ncc_data_line .= join("\t", $csome, $start, $end, $fragment_start, $fragment_end, $strand). "\t";
+      push(@ditag_halves, [$csome, $start, $end, $fragment_start, $fragment_end, $strand]);
     }
 
-    $ncc_data_line .= $index;    #This is the ambiguity group, which for HiCUP will be the same as the index
+    my $label_half_1 = join("\t", $ditag_halves[0]->[1], $ditag_halves[0]->[2], $ditag_halves[0]->[5]);
+    my $label_half_2 = join("\t", $ditag_halves[1]->[1], $ditag_halves[1]->[2], $ditag_halves[0]->[1]);
+    my $full_label;
+    my $swap = 0;
+
+    if ( ( $label_half_1 cmp $label_half_2 ) == 1 ) {
+      $full_label = join("\t", (@{$ditag_halves[1]}, @{$ditag_halves[0]}));
+      $swap = 1;
+    } else {
+      $full_label = join("\t", (@{$ditag_halves[0]}, @{$ditag_halves[1]}));
+    }
+
+    #print Dumper \@ditag_halves;
+
+ 
     
     #Get read position on original FASTQ file
     my ($align_headerF) = split(/\t/, $readF);
     my ($align_headerR) = split(/\t/, $readR);
-    my $align_seqF = (split(/\t/, $readF))[9];
-    my $align_seqR = (split(/\t/, $readR))[9];
-    my $align_strandF = (split(/\t/, $ncc_data_line))[6];
-    my $align_strandR = (split(/\t/, $ncc_data_line))[12];
-    $align_seqF = reverseComplement($align_seqF) if ($align_strandF eq '-');
-    $align_seqR = reverseComplement($align_seqR) if ($align_strandR eq '-');
-
 
     #Check headers make sense i.e. Forward is same as Reverse
     if($align_headerF eq $align_headerR){
@@ -250,28 +256,8 @@ for (my $i = 0; $i < scalar @aligned_files; $i++){
       die "This should not happen!\n";
     }
 
-    my $align_headerFR = $align_headerF;   #Just to clairfy Forward same as reverse
-
-    #Check sequences
-    my $ordering;
-    if( ($align_seqF eq $fastq_indexes{$align_headerFR}[1]) and ($align_seqR eq $fastq_indexes{$align_headerFR}[2]) ){
-      $ordering = 1;   #Check this!!!!!!
-
-    } elsif( ($align_seqF eq $fastq_indexes{$align_headerFR}[2]) and ($align_seqR eq $fastq_indexes{$align_headerFR}[1]) ){
-      $ordering = 0; 
-    
-    } else {
-      warn "Sequence pair in HiCUP file do not correspond to FASTQ files:\n";
-      warn "$align_seqF\n";
-      warn "$align_seqR\n";
-      warn "$readF\n";
-      warn "$readR\n";
-      die "This should not happen!\n";
-    }
-    
-    
-    $ncc_data_line .= "\n";
-
+    my $aligned_read_index_in_fastq = $fastq_indexes{$align_headerF};   # rem: align_headerF == align_headerF
+    my $ncc_data_line .= join("\t", $full_label, $index, $swap) . "\n";   #Ambiguity group same as number of reads
     print OUT $ncc_data_line;
     $index++;
   }
@@ -279,7 +265,6 @@ for (my $i = 0; $i < scalar @aligned_files; $i++){
   close $fh_aligned or die "Could not close filehandle on '$aligned_file' : $!";
   close OUT or die "Could not close filehandle on '$outfile' : $!";
 }
-
 
 print "Processing complete\n";
 
@@ -300,19 +285,6 @@ exit(0);
 #Subroutines
 #####################################################################
 
-#add to module file
-
-#######################
-##Subroutine "reverseComplement":
-##Reverse complements a string
-sub reverseComplement{
-  my $seq = $_[0];
-  $seq = reverse($seq);
-  $seq =~ tr/ATGCatgc/TACGtacg/;
-  return $seq;
-}
-
-
 
 #######################
 ##Subroutine "cleverOpen":
@@ -330,7 +302,6 @@ if( $file =~ /\.bam$/){
 }
 return $fh;
 }
-
 
 
 ##########################################
