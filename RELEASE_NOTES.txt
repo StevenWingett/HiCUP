@@ -1,3 +1,17 @@
+RELEASE NOTES FOR HICUP v0.8.2 (13 JULY 2021)
+-------------------------------------------------
+
+HiCUP v0.8.2 is a minor update incorporating the change described below:
+
+- The get_captured_reads script has been renamed to hicup_capture. The
+script is found in the Misc folder and is used to identify "captured"
+di-tags in a Capture Hi-C experiment.  The renamed script now works in
+both the Misc directory or in the same directory as hicup_module (which 
+is useful for Conda installs or when creating symbolic links to the 
+hicup_capture script).
+
+
+
 RELEASE NOTES FOR HICUP v0.8.1 (16 FEBRUARY 2021)
 -------------------------------------------------
 

@@ -771,6 +771,14 @@ Arima Protocol
 This is all that is additionally required to process an Arima Hi-C dataset.
 
 
+###############
+Miscellaneous Functioality
+###############
+The main HiCUP folder contains a folder named 'Misc' which contains several useful scripts.
+
+The script hicup_capture is for identifying di-tags mapping to captured regions of the genome in Capture Hi-C experiments (Capture Hi-C is described in - DOI: 10.1101/gr.185272.114).  For a di-tag to be considered captured, both or either read needs to map to a captured restriction fragment. 
+ 
+
 ##########
 References
 ##########
