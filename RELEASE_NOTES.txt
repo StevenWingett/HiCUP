@@ -1,3 +1,12 @@
+RELEASE NOTES FOR HICUP v0.8.3 (11 January 2022)
+-------------------------------------------------
+
+HiCUP v0.8.3 is a minor update incorporating the change described below:
+
+- Updated contact details
+
+
+
 RELEASE NOTES FOR HICUP v0.8.2 (13 JULY 2021)
 -------------------------------------------------
 

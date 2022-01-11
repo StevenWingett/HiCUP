@@ -8,7 +8,7 @@ our @EXPORT = qw(VERSION hasval deduplicate_array checkR process_config check_fi
 our @EXPORT_OK = qw(hashVal outdirFileNamer check_no_duplicate_filename check_filenames_ok 
     checkAligner checkAlignerIndices newopen quality_checker determineAlignerFormat get_csome_position);
 
-our $VERSION = "0.8.2";
+our $VERSION = "0.8.3";
 
 use Data::Dumper;
 use strict;
@@ -19,7 +19,7 @@ use lib $Bin;
 
 ###################################################################################
 ###################################################################################
-##This file is Copyright (C) 2020, Steven Wingett (steven.wingett@babraham.ac.uk)##
+##This file is Copyright (C) 2022, Steven Wingett                                ##
 ##                                                                               ##
 ##                                                                               ##
 ##This file is part of HiCUP.                                                    ##
