@@ -37,8 +37,8 @@ There are also HiCUP tutorials on the `Babraham Bioinformatics YouTube Channel <
 
 `Tutorial 3: Interpreting HiCUP Summary Results <https://www.youtube.com/watch?v=xWpjlXnsOU4>`_
 
-**We welcome your comments or suggestions, please email them to:**
-**steven.wingett@babraham.ac.uk**
+**We welcome your comments or suggestions, please report them at:**
+**https://github.com/StevenWingett/HiCUP/issues**
 
 
 Hi-C Overview
