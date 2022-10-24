@@ -34,16 +34,16 @@ use hicup_module;
 #Get user-supplied parameters
 #Option variables
 my %config = (
-  help            => '',
+  help    => '',
   version => '',
-  zip => ''
+  zip     => ''
 );
 
 
 my $config_result = GetOptions(
     "help"        => \$config{help},
     "version"     => \$config{version},
-    "zip" => \$config{zip}
+    "zip"         => \$config{zip}
 );
 die "Could not parse options.\n" unless ($config_result);
 
