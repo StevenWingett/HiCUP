@@ -43,7 +43,7 @@ my %config = (
 my $config_result = GetOptions(
     "help"        => \$config{help},
     "version"     => \$config{version},
-	"zip" => \$config{zip}
+    "zip" => \$config{zip}
 );
 die "Could not parse options.\n" unless ($config_result);
 
@@ -84,10 +84,10 @@ foreach my $file (@files){
   
   my $outfile = "$file.prejuicer";
   if($config{zip}){
-	$outfile .= '.gz';
-	open(OUT, "| gzip -c - > $outfile") or die "Could not write to '$outfile' : $!";
+    $outfile .= '.gz';
+    open(OUT, "| gzip -c - > $outfile") or die "Could not write to '$outfile' : $!";
   }else{
-	open (OUT, '>', $outfile) or die "Could not write to '$outfile'\n";
+    open (OUT, '>', $outfile) or die "Could not write to '$outfile'\n";
   }
   
 
@@ -95,41 +95,41 @@ foreach my $file (@files){
   my %grouped_ditags_blocs;
   
   while(<IN>){
-	next if(/^@/);   #Remove SAM header lines
+    next if(/^@/);   #Remove SAM header lines
     
     my $readF = $_;
     my $readR = scalar <IN>;
-	
-	my ($chromosomeF, $positionF, $strandF) = get_csome_position($readF);
-	my ($chromosomeR, $positionR, $strandR) = get_csome_position($readR);
-	
-	my $mapqF = (split("\t", $readF))[4];
-	my $mapqR = (split("\t", $readR))[4];
-	
-	my $ditag;
-	my $ditag_bloc;
-	
-	my $labelF = $chromosomeF . '_' . $positionF;
-	my $labelR = $chromosomeR . '_' . $positionR;
-	
-	if( ($labelF cmp $labelR) == 1 ){
-		$ditag_bloc = join('_', ($chromosomeR, $chromosomeF, $positionR, $positionF, $strandR, $strandF));
-		$ditag = "$strandR\t$chromosomeR\t$positionR\t0\t$strandF\t$chromosomeF\t$positionF\t1\t$mapqR\t$mapqF";
-	} else {
-		$ditag_bloc = join('_', ($chromosomeF, $chromosomeR, $positionF, $positionR, $strandF, $strandR));
-		$ditag = "$strandF\t$chromosomeF\t$positionF\t0\t$strandR\t$chromosomeR\t$positionR\t1\t$mapqF\t$mapqR";
-	}
-	
-	push( @{ $grouped_ditags_blocs{$ditag_bloc} }, $ditag);
-	
+    
+    my ($chromosomeF, $positionF, $strandF) = get_csome_position($readF);
+    my ($chromosomeR, $positionR, $strandR) = get_csome_position($readR);
+    
+    my $mapqF = (split("\t", $readF))[4];
+    my $mapqR = (split("\t", $readR))[4];
+    
+    my $ditag;
+    my $ditag_bloc;
+    
+    my $labelF = $chromosomeF . '_' . $positionF;
+    my $labelR = $chromosomeR . '_' . $positionR;
+    
+    if( ($labelF cmp $labelR) == 1 ){
+        $ditag_bloc = join('_', ($chromosomeR, $chromosomeF, $positionR, $positionF, $strandR, $strandF));
+        $ditag = "$strandR\t$chromosomeR\t$positionR\t0\t$strandF\t$chromosomeF\t$positionF\t1\t$mapqR\t$mapqF";
+    } else {
+        $ditag_bloc = join('_', ($chromosomeF, $chromosomeR, $positionF, $positionR, $strandF, $strandR));
+        $ditag = "$strandF\t$chromosomeF\t$positionF\t0\t$strandR\t$chromosomeR\t$positionR\t1\t$mapqF\t$mapqR";
+    }
+    
+    push( @{ $grouped_ditags_blocs{$ditag_bloc} }, $ditag);
+    
   }
   
   my $index = 1;
   foreach my $ditags_bloc (sort keys %grouped_ditags_blocs) {
-	foreach my $ditag ( @{ $grouped_ditags_blocs{$ditags_bloc} } ){
-		print OUT "$index\t$ditag\n";
-		$index++;
-	}
+    foreach my $ditag ( @{ $grouped_ditags_blocs{$ditags_bloc} } ){
+        print OUT "$index\t$ditag\n";
+        $index++;
+    }
   }
   
   close IN or die "Could not close filehandle on '$file' : $!";
