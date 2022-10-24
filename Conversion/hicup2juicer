@@ -49,7 +49,7 @@ my $config_result = GetOptions(
     "version"     => \$config{version},
     "zip"         => \$config{zip},
     "usemid"      => \$config{usemid},
-    "digest=s"      => \$config{digest}
+    "digest=s"    => \$config{digest}
 );
 die "Could not parse options.\n" unless ($config_result);
 
