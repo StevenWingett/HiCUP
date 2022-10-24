@@ -4,6 +4,7 @@ use strict;
 use warnings;
 use Getopt::Long;
 use FindBin '$Bin';
+use POSIX;
 use lib "$Bin/../";
 use hicup_module;
 
@@ -36,14 +37,19 @@ use hicup_module;
 my %config = (
   help    => '',
   version => '',
-  zip     => ''
+  zip     => '',
+  usemid  => '',
+  digest  => ''
 );
 
-
+##########################################################
+#Get user-supplied parameters
 my $config_result = GetOptions(
     "help"        => \$config{help},
     "version"     => \$config{version},
-    "zip"         => \$config{zip}
+    "zip"         => \$config{zip},
+    "usemid"      => \$config{usemid},
+    "digest=s"      => \$config{digest}
 );
 die "Could not parse options.\n" unless ($config_result);
 
@@ -65,8 +71,24 @@ unless(@ARGV){
 
 
 ##########################################################
+#Check user-supplied parameters are ok
+
+if ( $config{usemid} and !$config{digest} ) {
+  die "-usemid option requires -digest option"
+}
+
 #Parse data
 my @files = @ARGV;    #Pass file names as command-line arguments
+
+# Define variables:
+my %digest_fragments;
+my $protocol;
+my %last_first_bases;
+if ( $config{digest} ) {
+  print "Processing digester file\n";
+  process_digest_file();
+}
+
 foreach my $file (@files){
   
   chomp $file;
@@ -102,7 +124,54 @@ foreach my $file (@files){
     
     my ($chromosomeF, $positionF, $strandF) = get_csome_position($readF);
     my ($chromosomeR, $positionR, $strandR) = get_csome_position($readR);
+    my $fragF = 0;
+    my $fragR = 1;
     
+
+    if ( $config{digest} ) {
+        my ($lookup_start_site1, $lookup_end_site1, $fragment_number1) = identify_fragment($chromosomeF, $positionF, $strandF);
+        my ($lookup_start_site2, $lookup_end_site2, $fragment_number2) = identify_fragment($chromosomeR, $positionR, $strandR);
+
+        sub identify_fragment {
+            my ($read_chromosome_name, $read_pos, $read_strand) = @_;
+            my $read_pos_ten_kb_region = ceil( $read_pos / 10_000 );
+            my $lookup_start_site;
+            my $lookup_end_site;
+            my $fragment_number;
+
+            #In theory this should be correct, but in practice we often see dangling-ends etc. In such circumstances,
+            #we do not have a sonication point, but rather a restriction cut-site.  This will have been filled-in, and so
+            #we may have strayed into an adjacent restriction fragment  To correct for this, select a position  a little
+            #into the read and use this position for assigning reads to restriction fragments.
+            if($read_strand eq "+"){
+                $read_pos += 7;    #An indent of 7 should solve this problem
+            } else {
+                $read_pos -= 7; 
+            }
+
+            foreach ( keys %{ $digest_fragments{"$read_chromosome_name\t$read_pos_ten_kb_region"} } ) {
+                $lookup_start_site = $_;                               #Assign value here to ensure $lookup_start_site is initialized outside the foreach loop
+                $lookup_end_site = $digest_fragments{"$read_chromosome_name\t$read_pos_ten_kb_region"}{$lookup_start_site};
+                $fragment_number = ( split( /\t/, $lookup_end_site ) )[1];
+                $lookup_end_site = ( split( /\t/, $lookup_end_site ) )[0];                                                      #$lookup_end_site is the value before the tab
+
+                #Check whether read1 is on this fragment
+                if ( ( $lookup_start_site <= $read_pos ) and ( $lookup_end_site >= $read_pos ) ) {
+                    last;
+                }
+            }
+            return($lookup_start_site, $lookup_end_site, $fragment_number);
+        }
+
+        $fragF = $fragment_number1;
+        $fragR = $fragment_number2;
+
+        if ( $config{usemid} ){
+          $positionF = floor( ($lookup_start_site1 + $lookup_end_site1) / 2 );
+          $positionR = floor( ($lookup_start_site2 + $lookup_end_site2) / 2 );
+        }
+    }
+
     my $mapqF = (split("\t", $readF))[4];
     my $mapqR = (split("\t", $readR))[4];
     
@@ -113,11 +182,15 @@ foreach my $file (@files){
     my $labelR = $chromosomeR . '_' . $positionR;
     
     if( ($labelF cmp $labelR) == 1 ){
-        $ditag_bloc = join('_', ($chromosomeR, $chromosomeF, $positionR, $positionF, $strandR, $strandF));
-        $ditag = "$strandR\t$chromosomeR\t$positionR\t0\t$strandF\t$chromosomeF\t$positionF\t1\t$mapqR\t$mapqF";
+        if ( ! $config{digest} ) {
+          $fragR = 0;
+          $fragF = 1;
+        }
+        $ditag_bloc = join('_', ($chromosomeR, $chromosomeF, $positionR, $fragR, $positionF, $strandR, $strandF, $fragF));
+        $ditag = "$strandR\t$chromosomeR\t$positionR\t$fragR\t$strandF\t$chromosomeF\t$positionF\t$fragF\t$mapqR\t$mapqF";
     } else {
-        $ditag_bloc = join('_', ($chromosomeF, $chromosomeR, $positionF, $positionR, $strandF, $strandR));
-        $ditag = "$strandF\t$chromosomeF\t$positionF\t0\t$strandR\t$chromosomeR\t$positionR\t1\t$mapqF\t$mapqR";
+        $ditag_bloc = join('_', ($chromosomeF, $chromosomeR, $positionF, $fragF, $positionR, $strandF, $strandR, $fragR));
+        $ditag = "$strandF\t$chromosomeF\t$positionF\t$fragF\t$strandR\t$chromosomeR\t$positionR\t$fragR\t$mapqF\t$mapqR";
     }
     
     push( @{ $grouped_ditags_blocs{$ditag_bloc} }, $ditag);
@@ -201,6 +274,148 @@ sub get_csome_position{
 }
 
 
+##################################
+#Subroutine "process_digest_file":
+#reads the digest file, determines whether a double-digest or a sonication protocol
+#was followed and processes accordingly, returning a hash of the results.
+sub process_digest_file {
+    if ( $config{digest} =~ /.*\.gz$/ ) {
+        open( DIGEST, "gunzip -c $config{digest} |" ) or die "Cannot open file: $!";
+    } else {
+        open( DIGEST, $config{digest} ) or die "Cannot open file: $!";
+    }
+
+    my $first_line = <DIGEST>;    #Determine whether an enzymic double digest or sonication protocol
+    unless ( $first_line =~ /^.+\t(.+)\t(.+)\t.+$/ ) {
+        die "Genome digest file header is not in the correct format\n";
+    }
+
+    if ( $2 eq "Restriction_Enzyme2:None" ) {    #Sonication protocol
+        $protocol = "Sonication";
+
+        print "Sonication protocol followed - $1\n" unless $config{quiet};
+
+        while (<DIGEST>) {
+            unless (/\w+\t\d+\t\d+\t\d+/) {
+                next;
+            }
+            my $chromosome_name            = ( split /\t/ )[0];
+            my $first_base                 = ( split /\t/ )[1];
+            my $last_base                  = ( split /\t/ )[2];
+            my $fragment_number            = ( split /\t/ )[3];
+            my $ten_kb_region              = ceil( $first_base / 10000 );
+            my $fragment_end_ten_kb_region = ceil( $last_base / 10000 );
+
+            do {
+                $digest_fragments{"$chromosome_name\t$ten_kb_region"}{$first_base} = "$last_base\t$fragment_number";
+                $ten_kb_region++;
+            } while ( $ten_kb_region <= $fragment_end_ten_kb_region );
+        }
+
+    } else {    #Double-digest protocol
+        #First check if re1 & re2 have only a single enzyme each
+        unless ( $first_line =~ /.+\tRestriction_Enzyme1:(.+\[.+\])\tRestriction_Enzyme2:(.+\[.+\])\t.+/ ) {
+            die "Genome digest file $config{digest} is not in the correct format.\n";
+        }
+        my ($re1, $re2) = ($1, $2);
+        my ($re1count, $re2count) = (0, 0);
+        $re1count++ while ($re1 =~ m/(\S+)\s\[(\S+)\]/g);
+        $re2count++ while ($re2 =~ m/(\S+)\s\[(\S+)\]/g);
+        if ($re1count > 1 || $re2count > 1) {
+            die "Double-digest protocol does not support multiple enzyme digestion...\nPlease ensure you are using only one enzyme for RE1 as well as only one enzyme for RE2.\n"
+        }
+
+        #Determine the sequences of re1 and re2
+        unless ( $first_line =~ /.+\t.+\[(.+)\]\t.+\[(.+)\]/ ) {
+            die "Genome digest file $config{digest} is not in the correct format.\n";
+        }
+        $config{re1} = $1;    #Declared as a global variable
+        $config{re2} = $2;    #Declared as a global variable
+
+        print "Double digest protocol followed using $config{re1} and then $config{re2}\n" unless $config{quiet};
+
+        unless ( $config{re1} =~ /^[ATCGN\^]+$/ ) {
+            die "The restriction site (re1) needs to be a valid DNA sequence.\n";
+        }
+        unless ( ( $config{re1} =~ tr/\^// ) == 1 ) {
+            die "The restriction site (re1) should contain one cut position, denoted by '^'.\n";
+        }
+        unless ( $config{re2} =~ /^[ATCGN\^]+$/ ) {
+            die "The restriction site (re2) needs to be a valid DNA sequence.\n";
+        }
+        unless ( ( $config{re2} =~ tr/\^// ) == 1 ) {
+            die "The restriction site (re2) should contain one cut position, denoted by '^'.\n";
+        }
+
+        #If the restriction enzymes are not blunt-ended cutters, the sticky ends will be filled-in
+        #prior to A-tailing. This needs to be taken into account when aligning reads to the digested reference genome.
+        my ( $re1_start_correction, $re1_end_correction ) = fillin( $config{re1} );
+        my ( $re2_start_correction, $re2_end_correction ) = fillin( $config{re2} );
+
+        #Process the genome digest file: create a hash with the chromosome number + restriction fragment start positions as the keys.
+        #The remaining terms are stored as hash values.
+        $_ = <DIGEST>;    #Ignore header line.
+
+        while (<DIGEST>) {
+
+            #Chromosome, Start position, End Position, Fragment Number, Re1 Fragment Number, 5'-Cut Site, 3'-Cutsite.
+            if (/^\s$/) {
+                next;
+            }
+
+            my ( $chromosome, $first_base, $last_base, $fragment_number, $re1_fragment_number, $five_prime_enz, $three_prime_enz ) = split /\t/;
+
+            if ( $five_prime_enz eq 'RE1' ) {
+                $first_base += $re1_start_correction;
+            } elsif ( $five_prime_enz eq 'RE2' ) {
+                $first_base += $re2_start_correction;    #or do nothing if enzyme equals 'NONE'
+            }
+
+            if ( $three_prime_enz eq 'RE1' ) {
+                $last_base += $re1_end_correction;
+            } elsif ( $three_prime_enz eq 'RE2' ) {
+                $last_base += $re2_end_correction;       #or nothing if enzyme equals 'NONE'
+            }
+
+            $digest_fragments{ $chromosome . "\t" . $first_base } = join( "\t", $last_base, $fragment_number, $re1_fragment_number, $five_prime_enz, $three_prime_enz );
+        }
+    }
+
+    #Forward reads will map to the front of a restriction fragment, whereas reverse reads will map to the end.
+    #Consequently we need to relate end positions to a given fragment.
+    #The code below creates a "lookup" hash with fragment end positions as keys and first base pair positions as values.
+    foreach my $key ( keys %digest_fragments ) {
+        my $chromosome = ( split( /\t/, $key ) )[0];
+        my $first_base = ( split( /\t/, $key ) )[1];
+        my $last_base  = ( split( /\t/, $digest_fragments{$key} ) )[0];
+        $last_first_bases{"$chromosome\t$last_base"} = "$chromosome\t$first_base";
+    }
+    close DIGEST or die "Could not close filehandle on '$config{digest}' : $!";
+}
+
+#####################
+#Subroutine "fillin":
+#fills-in overhangs of a restriction fragment
+#Receives the restriction site sequence (positive strand) as input, returns the values of i) how many bases the
+#front should be brought forwards and ii) by how many bases the end should be extended. Both the returned values
+#refer to the positive strand.
+#For example, consider the HindIII sequence A^AGCTT. The front of the sequence will remain the same i.e. the base
+#after the cute site, but the end of the sequence will be extened by 4 bases. The returned values will therefore
+#be 0,4.
+sub fillin {
+    my $re = $_[0];
+    my ( $before_cut, $after_cut ) = split( /\^/, $re );
+    my $difference = length($after_cut) - length($before_cut);
+
+    if ( $difference > 0 ) {
+        return ( 0, $difference );
+    } elsif ( $difference < 0 ) {
+        return ( $difference, 0 );
+    } else {
+        return ( 0, 0 );
+    }
+}
+
 
 __DATA__
 
@@ -238,12 +453,12 @@ mapq = mapping quality score
 Column1: Readpair index number (starting at 1)
 Column2: forward read strand (0 = positive strand, 1 = negative strand)
 Column3: forward read chromosome name
-Column4: forward read position
-Column5: forward read fragment id (set to the dummy value 0)
+Column4: forward read position (or position of the middle of the fragment)
+Column5: forward read fragment id (set to the dummy value 0 unless digest file provided)
 Column6: reverse read strand (0 = positive strand, 1 = negative strand)
 Column7: reverse read chromosome name
-Column8: reverse read position
-Column9: reverse read fragment id (set to the dummy value 1)
+Column8: reverse read position (or position of the middle of the fragment)
+Column9: reverse read fragment id (set to the dummy value 1 unless digest file provided)
 Column10: forward read MAPQ score
 Column11: reverse read MAPQ score
 
@@ -253,6 +468,8 @@ COMMAND LINE OPTIONS
 --help         Print help message and exit
 --version      Print the program version and exit
 --zip          Write output to a gzip file
+--digest       Specify the genome digest file (created by hicup_digester) this allows to get the fragment id
+--usemid       Use the middle of the fragment as position instead of the 5' end.
 
 Full instructions on running the pipeline can be found at:
 www.bioinformatics.babraham.ac.uk/projects/hicup
