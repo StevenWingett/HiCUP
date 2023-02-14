@@ -1,3 +1,4 @@
+![HiCUP Logo](./assets/hicup_logo.png)
 
 - [HiCUP Overview](#hicup-overview)
   - [General Information](#general-information)
