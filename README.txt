@@ -9,4 +9,6 @@ http://www.bioinformatics.babraham.ac.uk/projects/hicup
 HiCUP Documentation:
 https://www.bioinformatics.babraham.ac.uk/projects/hicup/read_the_docs/html/index.html
 
-Primary contact: steven.wingett@babraham.ac.uk
+Contact:
+Contact the software author to discuss the software, report bugs or suggest enhancements at:
+https://github.com/StevenWingett/HiCUP/issues

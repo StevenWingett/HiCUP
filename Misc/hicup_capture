@@ -4,13 +4,16 @@ use strict;
 use warnings;
 use Getopt::Long;
 use POSIX;
+use FindBin '$Bin';
+use lib "$Bin/../";
+use lib "$Bin/";    #For when hicup_module is in the same dir as this script
 use hicup_module;
 
 use Data::Dumper;
 
 ###################################################################################
 ###################################################################################
-##This file is Copyright (C) 2016, Steven Wingett (steven.wingett@babraham.ac.uk)##
+##This file is Copyright (C) 2022, Steven Wingett                                ##
 ##                                                                               ##
 ##                                                                               ##
 ##This file is part of HiCUP.                                                    ##
@@ -56,12 +59,11 @@ if ( $config{help} ) {    #Print help and exit
 
 #Print version and exit
 if ( $config{version} ) {
-    print "HiCUP get_captured_reads v$hicup_module::VERSION\n";
+    print "HiCUP hicup_capture v$hicup_module::VERSION\n";
     exit(0);
 }
 
-
-print "Running get_captured_reads.pl v$hicup_module::VERSION\n";
+print "Running hicup_capture v$hicup_module::VERSION\n";
 
 ##############################################
 #Check input
@@ -506,16 +508,17 @@ __DATA__
 
 SYNOPSIS
 
-get_captured_reads.pl
+hicup_capture
 
-get_captured_reads.pl [OPTIONS] --baits [baits file] [BAM/SAM files]
-get_captured_reads.pl [OPTIONS]
+hicup_capture [OPTIONS] --baits [baits file] [BAM/SAM files]
+hicup_capture [OPTIONS]
 
 FUNCTION
 
-Takes a baits file and BAM/SAM Hi-C files (output from HiCUP) and separates 'captured'
-di-tags from 'uncaptured' di-tags, writing into two different BAM files. 
-Reports summary statistics on the results.
+For Capture Hi-C (CHiC) experiments. Takes a baits file and 
+BAM/SAM HiCUP file(s) and separates 'captured' di-tags from
+'uncaptured' di-tags, writing the output into two different 
+BAM files. Reports summary statistics on the results.
 
 The baits file should be a tab-delimited file of format:
 Chromosome    Start    End
@@ -523,9 +526,13 @@ Chromosome    Start    End
 COMMAND LINE OPTIONS
 
 --baits            Baits format file
---header           Specify number of header lines in the baits file (i.e. skip these)
+--header           Specify number of header lines in the baits 
+                   file (i.e. skip these) [Default 0]
 --help             Print help message and exit
---interactions     Calculate interaction frequecies between baits
+--interactions     Calculate interaction frequecies between 
+                   baits
 --version          Print the program version and exit
 
-Steven Wingett, Babraham Institute, Cambridge, UK (steven.wingett@babraham.ac.uk)
+Steven Wingett
+Babraham Institute, Cambridge, UK
+The MRC Laboratory of Molecular Biology, Cambridge, UK

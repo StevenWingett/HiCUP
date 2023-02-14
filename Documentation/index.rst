@@ -37,8 +37,8 @@ There are also HiCUP tutorials on the `Babraham Bioinformatics YouTube Channel <
 
 `Tutorial 3: Interpreting HiCUP Summary Results <https://www.youtube.com/watch?v=xWpjlXnsOU4>`_
 
-**We welcome your comments or suggestions, please email them to:**
-**steven.wingett@babraham.ac.uk**
+**We welcome your comments or suggestions, please report them at:**
+**https://github.com/StevenWingett/HiCUP/issues**
 
 
 Hi-C Overview
@@ -771,6 +771,14 @@ Arima Protocol
 This is all that is additionally required to process an Arima Hi-C dataset.
 
 
+###############
+Miscellaneous Functioality
+###############
+The main HiCUP folder contains a folder named 'Misc' which contains several useful scripts.
+
+The script hicup_capture is for identifying di-tags mapping to captured regions of the genome in Capture Hi-C experiments (Capture Hi-C is described in - DOI: 10.1101/gr.185272.114).  For a di-tag to be considered captured, both or either read needs to map to a captured restriction fragment. 
+ 
+
 ##########
 References
 ##########
@@ -882,7 +890,7 @@ HiCUP is distributed under a "GNU General Public License", a copy of which is di
 ################
 Report problems
 ################
-Please email **steven.wingett@babraham.ac.uk** if you have any problems running this program. 
+Please go to https://github.com/StevenWingett/HiCUP/issues if you have any problems running this program. 
 
 
 #################
