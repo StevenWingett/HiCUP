@@ -5,11 +5,12 @@ use warnings;
 use Getopt::Long;
 use FindBin '$Bin';
 use lib "$Bin/../";
+use lib "$Bin/"; #Useful for ln -s to script, but need hicup_module.pm in same dir
 use hicup_module;
 
 ###################################################################################
 ###################################################################################
-##This file is Copyright (C) 2022, Steven Wingett                                ##
+##This file is Copyright (C) 2023, Steven Wingett                                ##
 ##                                                                               ##
 ##                                                                               ##
 ##This file is part of HiCUP.                                                    ##
@@ -28,6 +29,7 @@ use hicup_module;
 ##along with HiCUP.  If not, see <http://www.gnu.org/licenses/>.                 ##
 ###################################################################################
 ###################################################################################
+
 
 
 ##########################################################
@@ -98,35 +100,16 @@ foreach my $file (@files){
     
     my $readF = $_;
     my $readR = scalar <IN>;
-    
-    my $chromosomeF = (split(/\t/, $readF))[2];
-    my $chromosomeR = (split(/\t/, $readR))[2];
-    my $positionF = (split(/\t/, $readF))[3];
-    my $positionR = (split(/\t/, $readR))[3];
-    my $seqF = (split(/\t/, $readF))[9];
-    my $seqR = (split(/\t/, $readR))[9];
 
-    my $strandF;
-    my $strandR;
-
-
-    if(((split(/\t/,$readF))[1]) & 0x10){    #Analyse the SAM bitwise flag to determine strand
-      $strandF = '-';    #Negative strand   
-    }else{
-      $strandF = '+';    #Positive strand
-    }
-
-    if(((split(/\t/,$readR))[1]) & 0x10){    #Analyse the SAM bitwise flag to determine strand
-      $strandR = '-';    #Negative strand
-    }else{
-      $strandR = '+';    #Positive strand
-    }
-
+    my ($chromosomeF, $positionF, $strandF) = get_csome_position($readF);
+    my ($chromosomeR, $positionR, $strandR) = get_csome_position($readR);
+  
     print OUT "$index\t$chromosomeF\t$positionF\t$strandF\t$chromosomeR\t$positionR\t$strandR\n";
     $index++;
   }
-  close IN;
-  close OUT or die "Could not close filehandle on '$outfile; : $!";
+
+  close IN or die "Could not close filehandle on '$file' : $!";
+  close OUT or die "Could not close filehandle on '$outfile' : $!";
 }
 
 print "Processing complete\n";

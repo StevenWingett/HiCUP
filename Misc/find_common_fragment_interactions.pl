@@ -7,7 +7,7 @@ use Data::Dumper;
 
 ###################################################################################
 ###################################################################################
-##This file is Copyright (C) 2022, Steven Wingett                                ##
+##This file is Copyright (C) 2023, Steven Wingett                                ##
 ##                                                                               ##
 ##                                                                               ##
 ##This file is part of HiCUP.                                                    ##

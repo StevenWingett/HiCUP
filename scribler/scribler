@@ -1,0 +1,701 @@
+#!/usr/bin/perl
+
+###################################################################################
+###################################################################################
+##This file is Copyright (C) 2023, Steven Wingett                                ##
+##                                                                               ##
+##                                                                               ##
+##This file is part of HiCUP.                                                    ##
+##                                                                               ##
+##HiCUP is free software: you can redistribute it and/or modify                  ##
+##it under the terms of the GNU General Public License as published by           ##
+##the Free Software Foundation, either version 3 of the License, or              ##
+##(at your option) any later version.                                            ##
+##                                                                               ##
+##HiCUP is distributed in the hope that it will be useful,                       ##
+##but WITHOUT ANY WARRANTY; without even the implied warranty of                 ##
+##MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the                  ##
+##GNU General Public License for more details.                                   ##
+##                                                                               ##
+##You should have received a copy of the GNU General Public License              ##
+##along with HiCUP.  If not, see <http://www.gnu.org/licenses/>.                 ##
+###################################################################################
+###################################################################################
+
+
+################################################################################################
+#Perl script to be used on SCRiBL datasets to create a Seqmonk data file for SCRiBL datasets.
+################################################################################################
+
+our $VERSION = '0.1.0.dev';
+
+use strict;
+use warnings;
+use Getopt::Long;
+use Bio::Seq;
+use Bio::SeqIO;
+
+use Data::Dumper;
+
+#Option variables
+my $baits_file;    #Stores baits positions
+my $digest;    #HiCUP digest file
+my $help;
+my $zip = 1;      #Zip by default - modified by --sam argument
+my $annotation;
+my $seqmonk;
+my $version_display;
+my $autoedit;
+my $sam;
+
+my $config_result = GetOptions(
+	"autoedit" => \$autoedit,
+    "baits=s"    => \$baits_file,
+	"digest=s"	=> \$digest,
+    "help"     => \$help,
+    "annotation" => \$annotation,
+    "seqmonk"    => \$seqmonk,
+	"sam" => \$sam,    #Zip by default
+	"version" => \$version_display
+);
+die "Could not parse options" unless ($config_result);
+
+######################################################################################
+#Check arguments ok
+if ($help) {
+    print_help();
+    exit (0);
+}
+
+if($version_display){
+	print "scribler v$VERSION\n";
+	exit (0);
+}
+
+$zip = 0 if $sam;   #Reverse TRUE/FALSE so zip by default
+
+if($digest){
+	unless(defined $baits_file){
+		die "Please specify a SCRIBL capture positions file (--baits).";    #HiCUP files not needed since only creating a SCRiBL digest annotation file
+	}
+}else{
+	unless ( @ARGV and defined $baits_file ) {
+		die "Please specify a SCRIBL capture positions file (--baits) and at least 1 HiCUP output file\n";
+	}
+}
+
+if ( $seqmonk and !defined $annotation ) {
+    print "Option '--seqmonk' chosen but not '--annotation'. Option '--annotation' selected automatically\n";
+    $annotation = 1;
+}
+
+#Input bait positions
+my %baits;               #Hash of arrays %baits{csome}->@(start\tend\tbait_name)
+my %baits_with_names;    #%{bait name} = "csome\tstart\tend"
+my %bait_name_count;     #Hash stores bait names only
+open( BAITS, '<', $baits_file ) or die "Could not open '$baits_file' : $!";
+
+while (<BAITS>) {
+    chomp;
+	my $line = $_;
+	next if $line =~ /^\s*$/;
+    my ( $csome, $start, $end, $bait_name ) = split(/\t/, $line);
+	
+	if(!defined $bait_name){
+		$bait_name = join('_', $csome, $start, $end);
+		warn "Bait name not defined in input file, creating name: '$bait_name'\n";
+	}
+	
+    if ( $bait_name eq '0' ) {
+        die "Baits may not be named '0', please edit the baits file accordingly.\n";
+    }
+
+	unless ( $bait_name =~ /^\w+$/ ) {
+		if($autoedit){
+			my $bait_name_edited = $bait_name;
+			$bait_name_edited =~ s/[\W]+/_/g;
+			
+			my $i = 2;
+			while(exists $baits_with_names{$bait_name_edited} ){    #Do not use an already existing name
+				$bait_name_edited =~ s/_version_\d*$//;
+				$bait_name_edited .= $bait_name_edited . '_version_' . $i;
+				$i++;
+			}
+			warn "'$bait_name' renamed to '$bait_name_edited'\n";
+			$bait_name = $bait_name_edited;		
+		}else{
+			die "Bait name may only contain alphanumeric characters and underscore ('_') i.e. not $bait_name - please rename bait or try --autoedit.\n";
+		}	
+	}
+
+    push( @{ $baits{$csome} }, "$start\t$end\t$bait_name" );
+    $baits_with_names{$bait_name} = "$csome\t$start\t$end";
+    $bait_name_count{$bait_name}++;
+}
+close BAITS;
+
+my $multiple_baits = 0;
+foreach my $bait_name ( keys %bait_name_count ) {
+    if ( $bait_name_count{$bait_name} > 1 ) {
+        print "Bait $bait_name present multiple times in baits file\n";
+        $multiple_baits = 1;
+    }
+}
+if ($multiple_baits) {
+    die "Please edit the baits file '$baits_file' and remove multiple baits.\n";
+}
+
+#Check input files exist
+my @files = deduplicate_array(@ARGV);
+my @annotation_files;
+
+unless ( check_files_exist( \@files, 'EXISTS' ) ) {
+    die "Please re-specify input files.\n";
+}
+
+if ($annotation) {
+    my @bait_csomes;
+    foreach my $position ( keys %baits ) {    #Check there is annotation file for every bait
+        my ($csome) = split( /\t/, $position );
+        push( @annotation_files, "$csome.dat" );
+    }
+    @annotation_files = deduplicate_array(@annotation_files);
+    unless ( check_files_exist( \@annotation_files, 'EXISTS' ) ) {
+        die "Expected annotation files not found, please add the file.\n";
+    }
+}
+
+if(defined $digest){
+    unless (-e $digest) {
+        die "Expected digest file '$digest' not found, please specify a file that exists.\n";	
+    }
+	
+	if( -e "$digest.scribl.txt"){
+		die "SCRiBL digest file '$digest.scribl.txt' already exists, please remove file.\n";
+	}
+}
+
+#Check output files do not exist
+my @outfiles;
+foreach my $file (@files) {
+	my $file_extension = 'sam';
+	$file_extension = 'bam' if $zip;
+    push( @outfiles, "$file.both_captured.$file_extension" );
+    push( @outfiles, "$file.one_captured.$file_extension" );
+	push( @outfiles, "$file.captured.$file_extension" );
+	push( @outfiles, "$file.both_captured.custom_genome.$file_extension") if $annotation;
+}
+
+push( @outfiles, 'capture_summary.txt' );
+unless ( check_files_exist( \@outfiles, 'NOT_EXISTS' ) ) {
+    die "Please re-specify input files.\n";
+}
+
+my @scribl_annotation_files;
+my @intermediate_dummy_files;
+my $filename_suffix = '';
+$filename_suffix = '.edited.dat' if $seqmonk;
+if ( defined $annotation ) {
+    foreach my $bait_name ( keys %baits_with_names ) {
+        push( @scribl_annotation_files,  "$bait_name.dat".$filename_suffix );
+        push( @intermediate_dummy_files, "dummy.$bait_name.dat".$filename_suffix );
+    }
+    unless ( check_files_exist( \@scribl_annotation_files, 'NOT_EXISTS' ) ) {
+        die "Those files need to be moved/deleted before the SCRiBL custom annotation file(s) can be generated.\n";
+    }
+    unless ( check_files_exist( \@intermediate_dummy_files, 'NOT_EXISTS' ) ) {
+        die "Intermediate 'dummy' files need to be moved/deleted before the SCRiBL custom annotation file(s) can be generated.\n";
+    }
+}
+
+if(@files){    #Don't create summary if creating a SCRiBL digest annotation file only
+	open( SUMMARY, '>', 'capture_summary.txt' ) or die "Could not write to 'capture_summary.txt' : $!";
+	print SUMMARY "File\tDitags_processed\tBoth_captured\tForward_captured\tReverse_capture\tNeither_captured\n";
+}
+
+#################################
+#Create the Seqmonk annotation file, if required
+if($digest){
+	print "Processing HiCUP digest file '$digest' to SeqMonk digest annotation track\n";
+	open( DIGEST, '<', $digest ) or die "Could not open '$digest' : $!";
+	open( SCRIBL_DIGEST, '>', "$digest.scribl.txt") or die "Could not write to '$digest.scribl.txt' : $!";
+	
+	scalar <DIGEST>;
+	scalar <DIGEST>;
+	
+	while(<DIGEST>){
+		my $line = $_;
+		chomp $line;
+		
+		my ($digest_csome, $digest_start, $digest_end) = split(/\t/, $line);
+		
+		#Hash of arrays %baits{csome}->@(start\tend\tbait_name)
+		if(exists $baits{$digest_csome}){
+			foreach my $bait ( @{ $baits{$digest_csome} }){
+				my ( $bait_start, $bait_end, $bait_name ) = split (/\t/, $bait);
+				
+				#Check whether the restriction fragment overlap with the bait
+				if ( ( ( $digest_start >= $bait_start ) and ( $digest_start <= $bait_end ) ) or ( ( $digest_end >= $bait_start ) and ( $digest_end <= $bait_end ) ) ) {
+					
+					#If necessary, trim the restriction fragment so it does not span beyond the SCRiBL bait
+					$digest_start = $bait_start if ($digest_start < $bait_start);
+					$digest_end = $bait_end if ($digest_end > $bait_end);
+					
+					#Reset so base 1 is the first base of the SCRiBL bait 
+					$digest_start = $digest_start - $bait_start + 1;
+					$digest_end = $digest_end - $bait_start + 1;
+						
+					print SCRIBL_DIGEST "$bait_name\t$digest_start\t$digest_end\n";
+					#Don't exit the loop here ('last;') is a fragment may overlap more than one bait
+				}		
+			}
+		}
+	}	
+	close DIGEST or die "Could not close filehandle on '$digest' : $!";
+	close SCRIBL_DIGEST or die "Could not close filehandle on '$digest.scribl.txt' : $!";
+	
+	print "SCRiBL digest file '$digest.scribl.txt' created\n";
+}
+
+
+if ($seqmonk) {    #Pre-process the '.dat' files to remove irregularites
+    foreach my $annotation_file (@annotation_files) {
+        open( ANNOTATION, '<', $annotation_file ) or die "Could not open '$annotation_file' : $!";
+        open( EDITED, '>', "$annotation_file.edited.dat" ) or die "Could not write to '$annotation_file.edited.dat' : $!";
+        while (<ANNOTATION>) {
+            print EDITED seqmonk_filter($_);
+        }
+        close ANNOTATION or die "Could not close filehandle on $annotation_file : $!";
+        close EDITED     or die "Could not close filehandle on '$annotation_file.edited.dat' : $!";
+    }
+}           
+
+if ($annotation) {
+    print "Creating annotation file(s)\n";
+    foreach my $bait_name ( keys %baits_with_names ) {
+        my ( $csome, $start, $end ) = split( /\t/, $baits_with_names{$bait_name} );
+        generate_custom_genome( $csome, $start, $end, $bait_name);
+    }
+}
+
+#################################
+#Process file
+
+#Edit the headers for the BAM file for the captured reads if --annotation selected
+#so that the headers correspond to SCRiBL baits
+#my @sq_bait_headers = ( '@SQ SN:1 LN:10000', '@SQ SN:10  LN:2000' );
+my @sq_bait_headers;
+foreach my $bait ( sort keys %baits_with_names ) {
+    my ( undef, $start, $end ) = split( /\t/, $baits_with_names{$bait} );
+    my $length    = $end - $start + 1;
+    my $sq_header = "\@SQ\tSN:$bait\tLN:$length";
+    push( @sq_bait_headers, $sq_header );
+}
+
+#%{bait name} = "csome\tstart\tend"
+
+foreach my $file (@files) {
+
+	print "Identifying captured reads in '$file'\n";
+
+    my @original_headers;
+	if($file =~ /\.bam$/){
+		@original_headers = `samtools view -H $file`;
+    }else{
+		@original_headers = `samtools view -SH $file`;
+	}	
+	
+	my @modified_headers;
+    $modified_headers[0] = $original_headers[0];
+
+    push( @modified_headers, @sq_bait_headers );
+
+    foreach my $header (@original_headers) {
+
+        next if ( substr( $header, 0, 3 ) eq '@HD' );
+        next if ( substr( $header, 0, 3 ) eq '@SQ' );
+        push( @modified_headers, $header );
+    }
+
+    if ( $file =~ /\.bam$/ ) {
+        open( IN, "samtools view $file |" ) or die "Could not read '$file' : $!";
+    } else {
+        open( IN, '<', $file ) or die "Could not open '$file' : $!";
+    }
+
+    if ($zip) {
+		if($annotation){
+			open( BOTH_CAPTURED_CUSTOM,   "| samtools view -bS 2>/dev/null - > $file.both_captured.custom_genome.bam" )   or die "Could not not write to '$file.both_captured.custom_genome.bam' : $!";
+		}
+		open( BOTH_CAPTURED,   "| samtools view -bS 2>/dev/null - > $file.both_captured.bam" )   or die "Could not not write to '$file.both_captured.bam' : $!";
+        open( ONE_CAPTURED,   "| samtools view -bS 2>/dev/null - > $file.one_captured.bam" )   or die "Could not not write to '$file.one_captured.bam' : $!";
+		open( UNCAPTURED, "| samtools view -bS 2>/dev/null - > $file.uncaptured.bam" ) or die "Could not not write to $file.uncaptured.bam : $!";
+    } else {
+		if($annotation){
+			open (BOTH_CAPTURED_CUSTOM,   '>', "$file.both_captured.custom_genome.sam" )   or die "Could not open '$file.both_captured.custom_genome.sam' : $!";
+        }
+		open( BOTH_CAPTURED,   '>', "$file.both_captured.sam" )   or die "Could not open '$file.both_captured.sam' : $!";
+		open( ONE_CAPTURED,   '>', "$file.one_captured.sam" )   or die "Could not open '$file.one_captured.sam' : $!";
+        open( UNCAPTURED, '>', "$file.uncaptured.sam" ) or die "Could not open '$file.uncaptured.sam' : $!";
+    }
+
+    #Print the headers to the output files
+    foreach my $header (@original_headers) {
+        chomp $header;    #Header may or may not have line endings at this stage
+        print UNCAPTURED "$header\n";
+        print BOTH_CAPTURED "$header\n";
+		print ONE_CAPTURED "$header\n";
+    }
+
+    if ($annotation) {
+        foreach my $header (@modified_headers) {
+            chomp $header;    #Header may or may not have line endings at this stage
+            print BOTH_CAPTURED_CUSTOM "$header\n";
+        }
+    }
+
+    my %counter = ( 'Total' => 0, 'Forward_captured' => 0, 'Reverse_captured' => 0, 'Both_captured' => 0, 'Neither_captured' => 0 );
+
+    while (<IN>) {
+        my $readF = $_;
+        chomp $readF;
+
+        next if ( substr( $readF, 0, 1 ) eq '@' );    #Ignore headers
+
+        my $readR = scalar <IN>;
+        chomp $readR;
+
+        $counter{Total}++;
+
+        my $chromosomeF      = ( split( /\t/, $readF ) )[2];
+        my $chromosomeR      = ( split( /\t/, $readR ) )[2];
+        my $five_prime_pos_F = ( split( /\t/, $readF ) )[3];
+        my $five_prime_pos_R = ( split( /\t/, $readR ) )[3];
+        my $seqF             = ( split( /\t/, $readF ) )[9];
+        my $seqR             = ( split( /\t/, $readR ) )[9];
+
+        my $three_prime_pos_F = $five_prime_pos_F + length($seqF) - 1;
+        my $three_prime_pos_R = $five_prime_pos_R + length($seqR) - 1;
+
+        my $strandF;
+        my $strandR;
+
+        #Are either of the strands captured?
+        my $forward_captured_bait = is_captured( $chromosomeF, $five_prime_pos_F, $three_prime_pos_F );
+        my $reverse_captured_bait = is_captured( $chromosomeR, $five_prime_pos_R, $three_prime_pos_R );
+
+        if ( ( $forward_captured_bait ne '0' ) and ( $reverse_captured_bait ne '0' ) ) {
+			
+			print BOTH_CAPTURED "$readF\n$readR\n";
+			$counter{Both_captured}++;
+
+            #Swap the chromosome names to the same names as the bait '.dat' files
+            if ($annotation) {    #Rename the chromosomes if
+                my @readF_elements = split( /\t/, $readF );
+                $readF_elements[2] = "$forward_captured_bait";
+                $readF_elements[6] = "$reverse_captured_bait";
+
+                my @readR_elements = split( /\t/, $readR );
+                $readR_elements[2] = "$reverse_captured_bait";
+                $readF_elements[6] = "$forward_captured_bait";
+
+                if ( $readF_elements[2] eq $readR_elements[2] ) {    #Cis interaction so use '='
+                    $readF_elements[6] = '=';
+                    $readR_elements[6] = '=';
+                }
+
+                #Change the position to match the SCRiBL bait
+                # #%baits_with_names{bait name} = "csome\tstart\tend"
+                my $baitF_start = (split(/\t/, $baits_with_names{$forward_captured_bait}) )[1];
+                my $baitR_start = (split(/\t/, $baits_with_names{$reverse_captured_bait}) )[1];
+
+                $readF_elements[3] = $readF_elements[3] - $baitF_start + 1;
+                $readF_elements[7] = $readF_elements[7] - $baitR_start + 1;
+                $readR_elements[3] = $readR_elements[3] - $baitR_start + 1;
+                $readR_elements[7] = $readR_elements[7] - $baitF_start + 1;
+
+                $readF = join( "\t", @readF_elements );
+                $readR = join( "\t", @readR_elements );
+				print BOTH_CAPTURED_CUSTOM "$readF\n$readR\n";			
+            }
+
+        } elsif ( $forward_captured_bait ne '0' ) {
+            print ONE_CAPTURED "$readF\n$readR\n";
+            $counter{Forward_captured}++;
+        } elsif ( $reverse_captured_bait ne '0' ) {
+            print ONE_CAPTURED "$readF\n$readR\n";
+            $counter{Reverse_captured}++;
+        } else {
+            print UNCAPTURED "$readF\n$readR\n";
+            $counter{Neither_captured}++;
+        }
+    }
+    print SUMMARY "$file\t$counter{Total}\t$counter{Both_captured}\t$counter{Forward_captured}\t$counter{Reverse_captured}\t$counter{Neither_captured}\n";
+	close BOTH_CAPTURED or warn "Could not close BOTH_CAPTURED when processing '$file' : $!";
+	close BOTH_CAPTURED_CUSTOM or warn "Could not close BOTH_CAPTURED_CUSTOM when processing '$file' : $!" if ($annotation);
+	close ONE_CAPTURED or warn "Could not close filehandle on ONE_CAPTURED when processing '$file' : $!";
+	close UNCAPTURED or warn "Could not close UNCAPTURED when processing '$file' : $!";
+}
+
+
+if(@files){     #Don't create summary file if creating a SCRiBL digest annotation file only
+	close SUMMARY or die "Could not close filehandle on 'capture_summary.txt' : $!";
+}
+
+print "Processing complete\n";
+
+exit;
+
+################################################################################
+#Subroutines
+################################################################################
+
+#####################################
+# Subroutine: generate_custom_genome
+# Takes a genome annotation file and a SCRiBL region and extracts from the annotation all
+# the annotations within the SCRiBL region
+
+sub generate_custom_genome {
+    my ( $csome, $start, $end, $bait ) = @_;
+    my $length = $end - $start + 1;
+    my $inFile;
+	my $outFile = "$bait.dat";
+
+	if($seqmonk){    #Declared outside of subroutine
+		$inFile = "$csome.dat.edited.dat";
+	}else{
+		$inFile = "$csome.dat";    #Use the file with SeqMonk irregularities removed
+	}
+
+    #############################
+    #Create the features text
+    #Create a dummy object with no features
+    my $dummy_obj = Bio::Seq->new( -alphabet => 'dna' );
+
+    #Create an object of the EMBL-format datafile
+    my $seqio_obj = Bio::SeqIO->new( -file => $inFile, -format => "embl" );
+    my $seq_obj = $seqio_obj->next_seq;
+
+    # Loop through each feature and write add to the dummy objects features within the desired range
+    # (modifying the positions if required)
+    my @features = $seq_obj->get_SeqFeatures();    #
+    foreach my $feat (@features) {
+
+        my $fstart = $feat->start;
+        my $fend   = $feat->end;
+
+        #Is any of the feature contained found in the region of interest
+        if ( ( ( $fstart >= $start ) and ( $fstart <= $end ) ) or ( ( $fend >= $start ) and ( $fend <= $end ) ) ) {
+
+            #If start or end fall outside the region of interest, truncate the feature accordingly
+            $fstart = $start if ( $fstart < $start );
+            $fend   = $end   if ( $fend > $end );
+
+            #Set a new offset for the feature positions where feature start = 1
+            $fstart = $fstart - $start + 1;
+            $fend   = $fend - $start + 1;
+
+            my $dummy_feat = new Bio::SeqFeature::Generic(
+                -start       => $fstart,
+                -end         => $fend,
+                -strand      => $feat->strand,
+                -primary_tag => $feat->primary_tag,
+            );
+
+            my @feat_tags = $feat->get_all_tags;
+            foreach my $feat_tag (@feat_tags) {
+                for my $feat_val ( $feat->get_tag_values($feat_tag) ) {
+
+                    #print "$feat_tag\t$feat_val\n";
+                    $dummy_feat->add_tag_value( $feat_tag, $feat_val );
+                }
+            }
+            $dummy_obj->add_SeqFeature($dummy_feat);
+        }
+    }
+
+    #Write the dummy object to an EMBL-format files
+    my $write_out = Bio::SeqIO->new( -file => ">dummy.$outFile", -format => 'embl' );
+    $write_out->write_seq($dummy_obj);
+
+    my $features_string = '';
+    open( DUMMY, '<', "dummy.$outFile" ) or die "Could not open 'dummy.$outFile' : $!";
+    while (<DUMMY>) {
+        my $line = $_;
+        if ( substr( $line, 0, 2 ) eq 'FT' ) {
+            $features_string .= $line;
+        }
+    }
+    close DUMMY or die "Could not close filehandle on 'dummy.$outFile' : $!";
+
+    open( ANNOTATION,        '<', $inFile )  or die "Could not open annotation file $inFile : $!";
+    open( SCRIBL_ANNOTATION, '>', $outFile ) or die "Could not write to $outFile : $!";
+
+    #Print custom feature file header
+    print SCRIBL_ANNOTATION "ID   $bait   standard; DNA; UNK; $length BP.\n";
+    print SCRIBL_ANNOTATION "XX\n";
+    print SCRIBL_ANNOTATION "AC   chromosome:SCRiBL:$bait:1:$length:1;\n";
+    print SCRIBL_ANNOTATION "XX\nDE\nXX\n";
+    print SCRIBL_ANNOTATION "FH   Key             Location/Qualifiers\n";
+    print SCRIBL_ANNOTATION "FH\n";
+
+    #Print features
+    print SCRIBL_ANNOTATION $features_string;
+
+    #Print footer
+    print SCRIBL_ANNOTATION "XX\n";
+    print SCRIBL_ANNOTATION "SQ   Sequence $length BP; 0 A; 0 C; 0 G; 0 T; $length other;\n";
+
+    close ANNOTATION        or die "Could not close annotation file $inFile : $!";
+    close SCRIBL_ANNOTATION or die "Could not close SCRiBL annotation file $outFile : $!";
+
+    unlink("dummy.$outFile") or die "Could not delete 'dummy.$outFile'\n";
+}
+
+#################################################################################
+#Subroutine: is_captured:
+#Take a SAM read and checks whether ALL of a read is captured by a SCRiBL bait
+#If the read is captured returns '1', else returns '0'
+sub is_captured {    #Subroutine determines whether a read is in a capture region
+    my ( $lookup_csome, $lookup_five_prime, $lookup_three_prime ) = @_;
+    foreach my $bait ( @{ $baits{$lookup_csome} } ) {    #%baits not passed to subroutine
+        my ( $bait_start, $bait_end, $bait_name ) = split( /\t/, $bait );
+        if ( ( $bait_start <= $lookup_five_prime ) and ( $bait_end >= $lookup_three_prime ) ) {
+            return $bait_name;                           #Captured
+        }
+    }
+    return 0;                                            #Not captured
+}
+
+###############################################################
+#Sub: deduplicate_array
+#Takes and array and returns the array with duplicates removed
+#(keeping 1 copy of each unique entry).
+sub deduplicate_array {
+    my @array = @_;
+    my %uniques;
+
+    foreach (@array) {
+        $uniques{$_} = '';
+    }
+    my @uniques_array = keys %uniques;
+    return @uniques_array;
+}
+
+###################################################################
+#check_files_exist:
+#Takes a reference to an array containing paths to filenames and verifies they exist
+#Warns of files that do no exit. Returns 1 if all files exist but 0 if this is not
+#the case.
+#
+#Also, takes a second argument:
+#$_[1] should be 'EXISTS' or 'NOT_EXISTS'
+#If 'NOT_EXIST' warns if file already exists.  Returns '1' if none of the
+#files exists and '0' if one or multiple files already exist
+sub check_files_exist {
+    my $files      = $_[0];
+    my $check_for  = $_[1];
+    my $all_exist  = 1;
+    my $not_exists = 1;
+
+    if ( $check_for eq 'EXISTS' ) {
+        foreach my $file (@$files) {
+            unless ( -e $file ) {
+                warn "$file does not exist\n";
+                $all_exist = 0;
+            }
+        }
+    } elsif ( $check_for eq 'NOT_EXISTS' ) {
+        foreach my $file (@$files) {
+            if ( -e $file ) {
+                warn "$file already exists\n";
+                $not_exists = 0;
+            }
+        }
+    } else {
+        die "Subroutine 'check_files_exist' requires argument 'EXISTS' or 'NOT_EXISTS'\n";
+    }
+
+    if ( $check_for eq 'EXISTS' ) {
+        return $all_exist;
+    } else {
+        return $not_exists;
+    }
+}
+
+###############################################
+#Subroutine: seqmonk_filter
+#Seqmonk '.dat. files often have irregularites preventing their
+#processing by BioPerl. This subroutine tries to remove these irregularites
+sub seqmonk_filter {
+    my $line = $_[0];
+
+    $line =~ s/\sption/ \/description/g;
+    $line =~ s/\siption/ \/description/g;
+    $line =~ s/\sescription/ \/description/g;
+    $line =~ s/First EF/First_EF/g;
+    $line =~ s/TSS \(Eponine\)/TSS_(Eponine)/g;
+    $line =~ s/CpG islands/CpG_islands/g;
+
+    return $line;
+}
+
+sub print_help {
+    print <<'END_TEXT';
+scribler (version $VERSION)	
+	
+Perl script to be used on SCRiBL datasets to create a Seqmonk data file for SCRiBL datasets. 
+Each bait region will be imported into Seqmonk as a separate chromosome.
+
+For this script, reads are only considered captured if ALL of BOTH
+reads in a di-tag overlap the SCRiBL capture region.
+
+Input files:
+i) 		BAM/SAM HiCUP output file(s)
+ii) 	SCRIBL bait co-ordinates
+iii) 	EMBL format genome annotation file(s) [optional]
+
+Usage:
+scribler [options] <HiCUP BAM/SAM output>
+
+Options
+--baits         To specifiy the name of the baits file. Baits should be in the format:
+                Chromosome	Bait_Start	Bait_End	Bait_Name
+                As a tab-delimited file
+--annotation    Create a custom annotation for the SCRiBL baits (compatible with SeqMonk)
+                The annotation files need to be named as follows: [chromosome name].dat
+                The chromosome names in the '.dat' file need to be identical
+                to those found in the SCRiBL bait file
+                This parameter takes no arguments
+				
+                Output files will be of the format:
+                [bait name].dat
+				
+                The chromosome names will be change to those of the bait in the captured di-tags 
+                BAM file
+
+                This is an optional parameter
+ 
+                EMBL format is the standard format produced by the EMBL nucleotide
+                sequence database at:
+                http://www.ebi.ac.uk/embl/
+                Specifically there is a list of completed genomes at:
+                http://www.ebi.ac.uk/genomes/
+                ..which contains links to EMBL formatted files of the final 
+                annotated genome assemblies
+--digest        Specify HiCUP digest file used to create a SCRiBL digest annotation file for
+                SeqMonk. This is an optional parameter
+--seqmonk       Edits the annotation file to remove common irregularities rendering the
+                file incompatible with BioPerl 
+                Can only be use in conjuction with "--annotation"
+                This parameter take no arguments
+--sam         	Do not compress the captured reads files (i.e. write to SAM format
+                not BAM format)
+--autoedit      Bait names may only contain alphanumeric characters. This argument will cause
+                the program to intelligently rename baits that contain prohibited characters
+--help          Print help and exit
+--version       Print version and exit
+
+Steven Wingett, Babraham Institute, Cambridge UK
+END_TEXT
+}

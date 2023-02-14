@@ -1,3 +1,21 @@
+RELEASE NOTES FOR HICUP v0.9.0 (14 February 2023)
+-------------------------------------------------
+
+HiCUP v0.9.0 is a major update incorporating the change described below:
+
+- hicup2juicer script may now be passed the parameter --digest which 
+  enables users to retrieve the fragment ID instead of the dummy values 
+  0 and 1 (contributed by https://github.com/lldelisle)
+
+- hicup2juicer script may be passed the parameter --usemid which results 
+  in the position in the middle of the restriction fragment being 
+  reported instead of the 5' end 
+  (contributed by https://github.com/lldelisle).
+
+- Added scripts for processing SCRiBL datasets.
+
+
+
 RELEASE NOTES FOR HICUP v0.8.3 (11 January 2022)
 -------------------------------------------------
 
