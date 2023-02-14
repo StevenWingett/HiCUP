@@ -26,7 +26,7 @@
     - [Bowtie2 Mapping Parameters](#bowtie2-mapping-parameters)
     - [Configuration file example](#configuration-file-example-2)
     - [Command line example](#command-line-example-2)
-- [Command Line Options](#command-line-options-2)
+    - [Command Line Options](#command-line-options-2)
   - [HiCUP Filter](#hicup-filter)
     - [Synopsis](#synopsis-3)
     - [Function](#function-3)
@@ -56,6 +56,7 @@
 - [Terms of use](#terms-of-use)
 - [Report problems](#report-problems)
 - [How to cite HiCUP](#how-to-cite-hicup)
+
 
 *******************************************************************
 
@@ -465,8 +466,7 @@ The [FASTQ](http://en.wikipedia.org/wiki/FASTQ_format) format options are:
 
 The output filenames will be based on the input filenames but suffixed with '.pair.sam' or '.pair.bam'. The script also produces a date-stamped file (e.g. 'hicup_mapper_summary_08-59-17_30-01-2015.txt') and summarises the results in SVG graphical format.
 
-Command Line Options
-====================
+### Command Line Options
     --bowtie            Specify the path to Bowtie
     --bowtie2           Specify the path to Bowtie 2
     --config            Specify the configuration file
