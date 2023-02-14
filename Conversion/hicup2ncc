@@ -14,7 +14,7 @@ use Data::Dumper;
 
 ########################################################################################
 ########################################################################################
-## This file is Copyright (C) 2021, Steven Wingett (steven.wingett@mrc-lmb.cam.ac.uk) ##
+## This file is Copyright (C) 2023, Steven Wingett (steven.wingett@mrc-lmb.cam.ac.uk) ##
 ##                                                                                    ##
 ##                                                                                    ##
 ## This file is part of HiCUP.                                                        ##
