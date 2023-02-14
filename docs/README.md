@@ -1,3 +1,4 @@
+
 - [HiCUP Overview](#hicup-overview)
   - [General Information](#general-information)
   - [Hi-C Overview](#hi-c-overview)
@@ -5,7 +6,7 @@
 - [HiCUP Quick Start Guide](#hicup-quick-start-guide)
   - [Requirements](#requirements)
   - [Installation](#installation)
-    - [Running HiCUP](#running-hicup)
+  - [Running HiCUP](#running-hicup)
 - [Scripts Description](#scripts-description)
   - [HiCUP (pipeline control script)](#hicup-pipeline-control-script)
     - [Synopsis](#synopsis)
@@ -56,7 +57,6 @@
 - [Terms of use](#terms-of-use)
 - [Report problems](#report-problems)
 - [How to cite HiCUP](#how-to-cite-hicup)
-
 
 *******************************************************************
 
@@ -139,7 +139,7 @@ Check after extracting that the Perl scripts are executable by **all**, which ca
 
     chmod a+x [files] 
 
-### Running HiCUP
+## Running HiCUP
 1) Create Aligner Indices
 
 HiCUP uses the aligner Bowtie or Bowtie2 to map sequences to a reference genome, requiring the construction of genome index files. These indices **MUST** be constructed from the same reference genome files as used by the HiCUP Digester script.
