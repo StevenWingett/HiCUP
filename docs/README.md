@@ -1,3 +1,64 @@
+- [HiCUP Overview](#hicup-overview)
+  - [General Information](#general-information)
+  - [Hi-C Overview](#hi-c-overview)
+  - [What is HiCUP?](#what-is-hicup)
+- [HiCUP Quick Start Guide](#hicup-quick-start-guide)
+  - [Requirements](#requirements)
+  - [Installation](#installation)
+    - [Running HiCUP](#running-hicup)
+- [Scripts Description](#scripts-description)
+  - [HiCUP (pipeline control script)](#hicup-pipeline-control-script)
+    - [Synopsis](#synopsis)
+    - [Function](#function)
+    - [Configuration File Example](#configuration-file-example)
+    - [Command Line Example](#command-line-example)
+    - [Command Line Options](#command-line-options)
+  - [HiCUP Truncater](#hicup-truncater)
+    - [Synopsis](#synopsis-1)
+    - [Function](#function-1)
+    - [Configuration File Example](#configuration-file-example-1)
+    - [Command Line Example](#command-line-example-1)
+    - [Command Line Options](#command-line-options-1)
+  - [HiCUP Mapper](#hicup-mapper)
+    - [Synopsis](#synopsis-2)
+    - [Function](#function-2)
+    - [Bowtie mapping parameters](#bowtie-mapping-parameters)
+    - [Bowtie2 Mapping Parameters](#bowtie2-mapping-parameters)
+    - [Configuration file example](#configuration-file-example-2)
+    - [Command line example](#command-line-example-2)
+- [Command Line Options](#command-line-options-2)
+  - [HiCUP Filter](#hicup-filter)
+    - [Synopsis](#synopsis-3)
+    - [Function](#function-3)
+    - [Configuration File Example](#configuration-file-example-3)
+    - [Command Line Example](#command-line-example-3)
+    - [Rejected paired reads (Hi-C Experimental Artefacts):](#rejected-paired-reads-hi-c-experimental-artefacts)
+    - [Command Line Options](#command-line-options-3)
+  - [HiCUP Deduplicator](#hicup-deduplicator)
+    - [Synopsis](#synopsis-4)
+    - [Function](#function-4)
+    - [Command Line Options](#command-line-options-4)
+  - [HiCUP Digester](#hicup-digester)
+    - [Synopsis](#synopsis-5)
+    - [Function](#function-5)
+    - [Command Line Options](#command-line-options-5)
+  - [HiCUP Reporter](#hicup-reporter)
+    - [Synopsis](#synopsis-6)
+    - [Function](#function-6)
+    - [Command Line Options](#command-line-options-6)
+- [Processing the Test Dataset](#processing-the-test-dataset)
+- [Arima Protocol](#arima-protocol)
+- [Miscellaneous Functioality](#miscellaneous-functioality)
+- [References](#references)
+  - [Documentation references](#documentation-references)
+  - [Selected research that used HiCUP](#selected-research-that-used-hicup)
+- [Acknowledgements](#acknowledgements)
+- [Terms of use](#terms-of-use)
+- [Report problems](#report-problems)
+- [How to cite HiCUP](#how-to-cite-hicup)
+
+*******************************************************************
+
 # HiCUP Overview
 
 **ATTENTION: HiCUP Version 8+ generates new format summary report HTML and text files.  You will also notice new a pipeline script HiCUP Reporter and a new R markdown file r_scripts/hicup_reporter.rmd.  To generate the HTML summary report now requires R to be installed on your system as well as the R modules Tidyverse and Plotly.  Also, collated summary reports will no longer be generated for the rarely used for double-digest Hi-C protocol.**
@@ -25,7 +86,7 @@ There are also HiCUP tutorials on the [Babraham Bioinformatics YouTube Channel](
 [![Tutorial 3: Interpreting HiCUP Summary Results](https://img.youtube.com/vi/xWpjlXnsOU4/0.jpg)](https://www.youtube.com/watch?v=xWpjlXnsOU4)
 
 **We welcome your comments or suggestions, please report them at:**
-**https://github.com/StevenWingett/HiCUP/issues**
+**[https://github.com/StevenWingett/HiCUP/issues](https://github.com/StevenWingett/HiCUP/issues)**
 
 
 ## Hi-C Overview
