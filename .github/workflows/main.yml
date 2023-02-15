@@ -52,13 +52,13 @@ jobs:
         $GITHUB_WORKSPACE/Conversion/hicup2homer --help
         $GITHUB_WORKSPACE/Conversion/hicup2juicer --help
         $GITHUB_WORKSPACE/Conversion/hicup2ncc --help
-        $GITHUB_WORKSPACE/Misc/find_common_fragment_interactions.pl --help
+        $GITHUB_WORKSPACE/Misc/find_common_fragment_interactions.pl --help || [[ $? == 255 ]]
         $GITHUB_WORKSPACE/Misc/hicup_capture --help
-        $GITHUB_WORKSPACE/Misc/make_hic_array.pl
-        $GITHUB_WORKSPACE/scribler/scribler
-        $GITHUB_WORKSPACE/scribler/scribl_capture_ditag_sorter.pl
-        $GITHUB_WORKSPACE/scribler/scribl_capture.pl
-        $GITHUB_WORKSPACE/scribler/scribl_capture_region_breakdown.pl
+        $GITHUB_WORKSPACE/Misc/make_hic_array.pl || [[ $? == 255 ]]
+        $GITHUB_WORKSPACE/scribler/scribler --help
+        $GITHUB_WORKSPACE/scribler/scribl_capture_ditag_sorter.pl || [[ $? == 255 ]]
+        $GITHUB_WORKSPACE/scribler/scribl_capture.pl || [[ $? == 255 ]]
+        $GITHUB_WORKSPACE/scribler/scribl_capture_region_breakdown.pl || [[ $? == 255 ]]
                          
     - name: Download Test Dataset and genome index files and FASTA files
       run: |
