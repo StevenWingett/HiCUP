@@ -75,4 +75,4 @@ jobs:
         
     - name: Check results
       run: |
-         $GITHUB_WORKSPACE/Testing/hicup_checker --threshold 5 --expected test_dataset/HiCUP_summary_test_dataset_results.txt --new HiCUP_summary_report_* 
+         $GITHUB_WORKSPACE/Testing/hicup_checker --threshold 0 --expected test_dataset/HiCUP_summary_test_dataset_results.txt --new HiCUP_summary_report_* 
