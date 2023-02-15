@@ -71,7 +71,7 @@ jobs:
     - name: Run HiCUP
       run: |
         $GITHUB_WORKSPACE/hicup_digester --re1 A^AGCTT,HindIII --genome Human38 --zip hg38.analysisSet.fa.gz
-        $GITHUB_WORKSPACE/hicup --digest Digest* --zip --threads 2 --index ./GRCh38_noalt_as/GRCh38_noalt_as --shortest 50 --longest 700 test_dataset/*.fastq
+        $GITHUB_WORKSPACE/hicup --bowtie2 $(which bowtie2) --digest Digest* --zip --threads 2 --index ./GRCh38_noalt_as/GRCh38_noalt_as --shortest 50 --longest 700 test_dataset/*.fastq
         
     - name: Check results
       run: |
