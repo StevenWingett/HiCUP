@@ -68,7 +68,9 @@ jobs:
         gunzip -k hg38.fa.gz
 
     - name: Build bowtie2 index
-      run: bowtie2-build hg38.fa hg38/hg38
+      run: |
+        mkdir -p hg38
+        bowtie2-build hg38.fa hg38/hg38
         
     - name: Run HiCUP
       run: |
