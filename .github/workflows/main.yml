@@ -36,6 +36,29 @@ jobs:
         sudo apt install samtools
         sudo apt install bowtie2
         sudo apt install r-base-core
+        sudo apt install bioperl
+
+    - name: Test all perl scripts
+      run: |
+        $GITHUB_WORKSPACE/hicup --help
+        $GITHUB_WORKSPACE/hicup --version
+        $GITHUB_WORKSPACE/hicup_mapper --help
+        $GITHUB_WORKSPACE/hicup_digester --help
+        $GITHUB_WORKSPACE/hicup_truncater --help
+        $GITHUB_WORKSPACE/hicup_deduplicator 2>&1 | grep Please
+        $GITHUB_WORKSPACE/Conversion/hicup2hicpipe --help
+        $GITHUB_WORKSPACE/Conversion/hicup2gothic --help
+        $GITHUB_WORKSPACE/Conversion/hicup2fithic --help
+        $GITHUB_WORKSPACE/Conversion/hicup2homer --help
+        $GITHUB_WORKSPACE/Conversion/hicup2juicer --help
+        $GITHUB_WORKSPACE/Conversion/hicup2ncc --help
+        $GITHUB_WORKSPACE/Misc/find_common_fragment_interactions.pl --help
+        $GITHUB_WORKSPACE/Misc/hicup_capture --help
+        $GITHUB_WORKSPACE/Misc/make_hic_array.pl
+        $GITHUB_WORKSPACE/scribler/scribler
+        $GITHUB_WORKSPACE/scribler/scribl_capture_ditag_sorter.pl
+        $GITHUB_WORKSPACE/scribler/scribl_capture.pl
+        $GITHUB_WORKSPACE/scribler/scribl_capture_region_breakdown.pl
                          
     - name: Download Test Dataset and genome index files and FASTA files
       run: |
@@ -47,8 +70,6 @@ jobs:
         
     - name: Run HiCUP
       run: |
-        $GITHUB_WORKSPACE/hicup --help
-        $GITHUB_WORKSPACE/hicup --version
         $GITHUB_WORKSPACE/hicup_digester --re1 A^AGCTT,HindIII --genome Human38 --zip hg38.analysisSet.fa.gz
         $GITHUB_WORKSPACE/hicup --digest Digest* --zip --threads 2 --index ./GRCh38_noalt_as/GRCh38_noalt_as --shortest 50 --longest 700 test_dataset/*.fastq
         
