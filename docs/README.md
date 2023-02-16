@@ -878,11 +878,10 @@ HiCUP is distributed under a "GNU General Public License", a copy of which is di
 
 # Report problems
 
-Please go to https://github.com/StevenWingett/HiCUP/issues if you have any problems running this program. 
+Please go to the [GitHub HiCUP Issues page](https://github.com/StevenWingett/HiCUP/issues) if you have any problems running this program. 
 
 *******************************************************************
 
-*******************************************************************
 
 # Contributing to HiCUP
 
