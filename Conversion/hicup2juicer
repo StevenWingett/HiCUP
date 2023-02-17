@@ -61,7 +61,7 @@ if ( $config{help} ) {
 }
 
 if ( $config{version} ) {    #Print version and exit
-    print "hicup2juicebox v$hicup_module::VERSION\n";
+    print "hicup2juicer v$hicup_module::VERSION\n";
     exit(0);
 }
 
