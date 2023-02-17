@@ -57,6 +57,7 @@
 - [Acknowledgements](#acknowledgements)
 - [Terms of use](#terms-of-use)
 - [Report problems](#report-problems)
+- [Contributing to HiCUP](#contributing-to-hicup)
 - [How to cite HiCUP](#how-to-cite-hicup)
 
 *******************************************************************
@@ -148,6 +149,7 @@ HiCUP uses the aligner Bowtie or Bowtie2 to map sequences to a reference genome,
 On the command line enter ‘bowtie-build’ (or bowtie2-build) to construct the indices, followed by a comma-separated list of the sequence files and then a space followed by the name of the output indices:  
 
     bowtie-build 1.fa,2.fa,...,MT.fa Human_GRCh37
+
 or
 
     bowtie2-build 1.fa,2.fa,...,MT.fa Human_GRCh37
@@ -880,9 +882,19 @@ Please go to https://github.com/StevenWingett/HiCUP/issues if you have any probl
 
 *******************************************************************
 
+*******************************************************************
+
+# Contributing to HiCUP
+
+Please use GitHub to submit code.  Please make pull requests to the HiCUP development branch.  If you have any queries about this then please get in contact via GitHub.  
+
+*******************************************************************
+
+
+
 # How to cite HiCUP
 
-HiCUP is described in:
+[HiCUP was published in the peer-reviewed journal F1000Research:](https://f1000research.com/articles/4-1310):
 
 **Wingett S, et al. (2015) HiCUP: pipeline for mapping and processing Hi-C data F1000Research, 4:1310 (doi: 10.12688/f1000research.7334.1)**
 
