@@ -1,5 +1,12 @@
 ![HiCUP Logo](./assets/hicup_logo.png)
 
+![GitHub release (latest by date)](https://img.shields.io/github/v/release/StevenWingett/HiCUP)
+
+![Anaconda release](https://anaconda.org/bioconda/hicup/badges/version.svg)
+![Anaconda release](https://anaconda.org/bioconda/hicup/badges/downloads.svg)
+
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.33388.svg)](https://doi.org/10.5281/zenodo.33388)
+
 - [HiCUP Overview](#hicup-overview)
   - [General Information](#general-information)
   - [Hi-C Overview](#hi-c-overview)
@@ -51,6 +58,7 @@
 - [Processing the Test Dataset](#processing-the-test-dataset)
 - [Arima Protocol](#arima-protocol)
 - [Miscellaneous Functioality](#miscellaneous-functioality)
+- [Other Distributions (Anaconda / Bioconda)](#other-distributions-anaconda--bioconda)
 - [References](#references)
   - [Documentation references](#documentation-references)
   - [Selected research that used HiCUP](#selected-research-that-used-hicup)
@@ -771,6 +779,12 @@ The main HiCUP folder contains a folder named 'Misc' which contains several usef
 
 The script hicup_capture is for identifying di-tags mapping to captured regions of the genome in Capture Hi-C experiments (Capture Hi-C is described in - DOI: 10.1101/gr.185272.114).  For a di-tag to be considered captured, both or either read needs to map to a captured restriction fragment. 
  
+*******************************************************************
+
+# Other Distributions (Anaconda / Bioconda)
+
+While we have made HiCUP available by downloading the source code, the wider bioinformatics community has [made the software available on Ananconda](https://anaconda.org/bioconda/hicup).  We do not manage this distribution, but a big thank you to the bioinformaticians who made this possible.
+
 *******************************************************************
 
 # References
