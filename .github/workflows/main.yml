@@ -81,3 +81,19 @@ jobs:
     - name: Check results
       run: |
          $GITHUB_WORKSPACE/Testing/hicup_checker --threshold 5 --expected $GITHUB_WORKSPACE/Testing/test_output/HiCUP_summary_report_lHWLvpbSoZ_13-54-49_16-02-2023.txt --new HiCUP_summary_report_* 
+
+    - name: Run hicup2juicer
+      run: |
+        $GITHUB_WORKSPACE/Conversion/hicup2juicer --nosort --usemid --digest Digest_Human38chr21and22_HindIII_None_*txt.gz test_dataset1_2.hicup.bam
+
+    - name: Check results
+      run: |
+          n_lines_diff=$(diff test_dataset1_2.hicup.bam.prejuicer $GITHUB_WORKSPACE/Testing/test_output/test_dataset1_2.hicup.bam.prejuicer | wc -l)
+          if [ $n_lines_diff -neq 0 ]; then
+            echo "Files are different"
+            diff test_dataset1_2.hicup.bam.prejuicer $GITHUB_WORKSPACE/Testing/test_output/test_dataset1_2.hicup.bam.prejuicer
+            exit 1
+          else
+            echo "Files are identical"
+          fi
+        
