@@ -36,23 +36,48 @@ jobs:
         sudo apt install samtools
         sudo apt install bowtie2
         sudo apt install r-base-core
-                         
-    - name: Download Test Dataset and genome index files and FASTA files
-      run: |
-        wget -nv https://www.bioinformatics.babraham.ac.uk/projects/hicup/test_dataset.tar.gz
-        tar xvzf test_dataset.tar.gz
-        wget -nv http://ftp1.babraham.ac.uk/ftpusr46/Homo_sapiens.GRCh38_Bowtie2_Index_HiCUP.tar
-        tar xvf Homo_sapiens.GRCh38_Bowtie2_Index_HiCUP.tar
-        wget -nv http://ftp1.babraham.ac.uk/ftpusr46/Homo_sapiens.GRCh38_FASTA_HiCUP.tar
-        tar xvf Homo_sapiens.GRCh38_FASTA_HiCUP.tar
-        
-    - name: Run HiCUP
+        sudo apt install bioperl
+
+    - name: Test all perl scripts
       run: |
         $GITHUB_WORKSPACE/hicup --help
         $GITHUB_WORKSPACE/hicup --version
-        $GITHUB_WORKSPACE/hicup_digester --re1 A^AGCTT,HindIII --genome Human38 --zip *.fa.gz
-        $GITHUB_WORKSPACE/hicup --digest Digest* --zip --threads 2 --index ./Homo_sapiens.GRCh38_Bowtie2_Index_HiCUP/Homo_sapiens.GRCh38 --shortest 50 --longest 700 test_dataset/*.fastq
+        $GITHUB_WORKSPACE/hicup_mapper --help
+        $GITHUB_WORKSPACE/hicup_digester --help
+        $GITHUB_WORKSPACE/hicup_truncater --help
+        $GITHUB_WORKSPACE/hicup_deduplicator 2>&1 | grep Please
+        $GITHUB_WORKSPACE/Conversion/hicup2hicpipe --help
+        $GITHUB_WORKSPACE/Conversion/hicup2gothic --help
+        $GITHUB_WORKSPACE/Conversion/hicup2fithic --help
+        $GITHUB_WORKSPACE/Conversion/hicup2homer --help
+        $GITHUB_WORKSPACE/Conversion/hicup2juicer --help
+        $GITHUB_WORKSPACE/Conversion/hicup2ncc --help
+        $GITHUB_WORKSPACE/Misc/find_common_fragment_interactions.pl --help || [[ $? == 255 ]]
+        $GITHUB_WORKSPACE/Misc/hicup_capture --help
+        $GITHUB_WORKSPACE/Misc/make_hic_array.pl || [[ $? == 255 ]]
+        $GITHUB_WORKSPACE/scribler/scribler --help
+        $GITHUB_WORKSPACE/scribler/scribl_capture_ditag_sorter.pl || [[ $? == 255 ]]
+        $GITHUB_WORKSPACE/scribler/scribl_capture.pl || [[ $? == 255 ]]
+        $GITHUB_WORKSPACE/scribler/scribl_capture_region_breakdown.pl || [[ $? == 255 ]]
+                         
+    - name: Download Test Dataset and FASTA files
+      run: |
+        wget -nv https://www.bioinformatics.babraham.ac.uk/projects/hicup/test_dataset.tar.gz
+        tar xvzf test_dataset.tar.gz
+        wget -nv https://hgdownload.soe.ucsc.edu/goldenPath/hg38/chromosomes/chr21.fa.gz
+        wget -nv https://hgdownload.soe.ucsc.edu/goldenPath/hg38/chromosomes/chr22.fa.gz
+        cat chr*.fa.gz | gunzip > chr21chr22_hg38.fa
+
+    - name: Build bowtie2 index
+      run: |
+        mkdir -p chr21chr22_hg38
+        bowtie2-build chr21chr22_hg38.fa chr21chr22_hg38/chr21chr22_hg38
+        
+    - name: Run HiCUP
+      run: |
+        $GITHUB_WORKSPACE/hicup_digester --re1 A^AGCTT,HindIII --genome Human38chr21and22 --zip chr21chr22_hg38.fa
+        $GITHUB_WORKSPACE/hicup --bowtie2 $(which bowtie2) --digest Digest* --zip --threads 2 --index ./chr21chr22_hg38/chr21chr22_hg38 --shortest 50 --longest 700 test_dataset/*.fastq
         
     - name: Check results
       run: |
-         $GITHUB_WORKSPACE/Testing/hicup_checker --threshold 5 --expected test_dataset/HiCUP_summary_test_dataset_results.txt --new HiCUP_summary_report_* 
+         $GITHUB_WORKSPACE/Testing/hicup_checker --threshold 5 --expected $GITHUB_WORKSPACE/Testing/test_output/HiCUP_summary_report_lHWLvpbSoZ_13-54-49_16-02-2023.txt --new HiCUP_summary_report_* 
