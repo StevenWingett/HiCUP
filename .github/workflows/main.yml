@@ -85,13 +85,27 @@ jobs:
     - name: Run hicup2juicer
       run: |
         $GITHUB_WORKSPACE/Conversion/hicup2juicer --nosort --usemid --digest Digest_Human38chr21and22_HindIII_None_*txt.gz test_dataset1_2.hicup.bam
+        mv test_dataset1_2.hicup.bam.prejuicer nosortusemid.prejuicer
+        $GITHUB_WORKSPACE/Conversion/hicup2juicer --useindex test_dataset1_2.hicup.bam
+        mv test_dataset1_2.hicup.bam.prejuicer useindex.prejuicer
+
 
     - name: Check results
       run: |
-          n_lines_diff=$(diff test_dataset1_2.hicup.bam.prejuicer $GITHUB_WORKSPACE/Testing/test_output/test_dataset1_2.hicup.bam.prejuicer | wc -l)
+          echo "Testing nosort usemid"
+          n_lines_diff=$(diff nosortusemid.prejuicer $GITHUB_WORKSPACE/Testing/test_output/test_dataset1_2.hicup.bam.prejuicer | wc -l)
           if [ $n_lines_diff -neq 0 ]; then
             echo "Files are different"
-            diff test_dataset1_2.hicup.bam.prejuicer $GITHUB_WORKSPACE/Testing/test_output/test_dataset1_2.hicup.bam.prejuicer
+            diff  nosortusemid.prejuicer $GITHUB_WORKSPACE/Testing/test_output/test_dataset1_2.hicup.bam.prejuicer
+            exit 1
+          else
+            echo "Files are identical"
+          fi
+          echo "Testing useindex"
+          n_lines_diff=$(diff useindex.prejuicer $GITHUB_WORKSPACE/Testing/test_output/test_dataset1_2.hicup.bam.prejuicer2 | wc -l)
+          if [ $n_lines_diff -neq 0 ]; then
+            echo "Files are different"
+            diff useindex.prejuicer $GITHUB_WORKSPACE/Testing/test_output/test_dataset1_2.hicup.bam.prejuicer2
             exit 1
           else
             echo "Files are identical"

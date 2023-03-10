@@ -36,12 +36,13 @@ use hicup_module;
 #Get user-supplied parameters
 #Option variables
 my %config = (
-  help    => '',
-  version => '',
-  zip     => '',
-  usemid  => '',
-  digest  => '',
-  nosort  => ''
+  help     => '',
+  version  => '',
+  zip      => '',
+  usemid   => '',
+  digest   => '',
+  nosort   => '',
+  useindex => ''
 );
 
 ##########################################################
@@ -52,7 +53,8 @@ my $config_result = GetOptions(
   "zip"         => \$config{zip},
   "usemid"      => \$config{usemid},
   "digest=s"    => \$config{digest},
-  "nosort"      => \$config{nosort}
+  "nosort"      => \$config{nosort},
+  "useindex"    => \$config{useindex}
 );
 die "Could not parse options.\n" unless ($config_result);
 
@@ -118,6 +120,7 @@ foreach my $file (@files){
 
   
   my %grouped_ditags_blocs;
+  my $index = 1;
   
   while(<IN>){
     next if(/^@/);   #Remove SAM header lines
@@ -178,7 +181,14 @@ foreach my $file (@files){
     my $mapqF = (split("\t", $readF))[4];
     my $mapqR = (split("\t", $readR))[4];
     
-    my $readname = (split("\t", $readF))[0];
+    my $readname;
+
+    if ( $config{useindex} ) {
+      $readname = $index;
+      $index++;
+    } else {
+      $readname = (split("\t", $readF))[0];
+    }
 
     my $ditag;
     my $ditag_bloc;
