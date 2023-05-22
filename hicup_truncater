@@ -645,7 +645,7 @@ COMMAND LINE OPTIONS
 --quiet          Suppress all progress reports
 --re1            Restriction enzyme recognition sequence. e.g. A^GATCT,BglII
                  HiCUP can accomodate more than one enzyme and N nucleotides
-                 e.g. A^GATCT,BglII:A^AGCTT,HindIII:^GANTC.
+                 e.g. A^GATCT,BglII:A^AGCTT,HindIII:^GANTC
 --sequences      Instead of specifying a restriction enzyme recognition sequence,
                  specify the ligation sequences directly
 --threads        Number of threads to use, allowing simultaneous processing  of 
