@@ -386,9 +386,23 @@ sub check_re1 {
         #Then, for each of the deduced cut sites, build the start & end sequences of the ligation junctions
         my @junctions_per_site = ();
         foreach my $cutsite (@{$config{re1_deduced_cut_sites}->[$i]}) {
-            my $start_seq = substr($cutsite, 0, length($cutsite) - $config{re1_caret_position}->[$i]);
-            my $end_seq   = substr($cutsite, $config{re1_caret_position}->[$i]);
-            push @junctions_per_site, { -start => $start_seq, 
+            my $start_seq = "";
+            my $end_seq = "";
+            # Handle edge cases such as NlaIII (CATG^).
+            if (length($cutsite) == $config{re1_caret_position}->[$i]) { ## caret at end
+                $start_seq = $cutsite;
+            }
+            elsif ($config{re1_caret_position}->[$i] == 0) {
+                $end_seq = $cutsite;
+            }
+            else {
+                $start_seq = substr($cutsite, 0, length($cutsite) - $config{re1_caret_position}->[$i]);
+                $end_seq   = substr($cutsite, $config{re1_caret_position}->[$i]);
+            }
+            ## Debug:
+            ## print "mycutsite=" . $cutsite . " caret_ind=" . $config{re1_caret_position}->[$i] .
+            ##     " start_seq=" . $start_seq . " end_seq=" . $end_seq . "\n";
+            push @junctions_per_site, { -start => $start_seq,
                                         -end   => $end_seq };
         }
         push @junctions, \@junctions_per_site
