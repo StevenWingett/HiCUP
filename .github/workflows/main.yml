@@ -75,7 +75,7 @@ jobs:
         
     - name: Run HiCUP
       run: |
-        $GITHUB_WORKSPACE/hicup_digester --re1 A^AGCTT,HindIII --genome Human38chr21and22 --zip chr21chr22_hg38.fa
+        $GITHUB_WORKSPACE/hicup_digester --re1 A^AGCTT,HindIII --genome Human38.chr21-22 --zip chr21chr22_hg38.fa
         $GITHUB_WORKSPACE/hicup --bowtie2 $(which bowtie2) --digest Digest* --zip --threads 2 --index ./chr21chr22_hg38/chr21chr22_hg38 --shortest 50 --longest 700 test_dataset/*.fastq
         
     - name: Check results

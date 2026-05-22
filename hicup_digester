@@ -349,8 +349,8 @@ sub check_parameters {
     }
 
     if (hasval ($config{genome}) ) {
-        unless($config{genome} =~ /^\w*$/){
-            warn "Option --genome may only be passed alphanumeric characters and underscore, please adjust\n";
+        unless($config{genome} =~ /^[\w\-\.]*$/){
+            warn "Option --genome may only be passed alphanumeric characters, underscore, hyphen and dot, please adjust\n";
             $parameters_ok = 0;
         }
     }
